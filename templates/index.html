@@ -7,7 +7,13 @@
   <aside class="lg:col-span-3 flex flex-col gap-6 overflow-y-auto pr-2 scrollbar-hide">
     
     <!-- System Pulse -->
-    <div id="status" hx-get="/partials/status" hx-trigger="load, every 3s" hx-swap="outerHTML">
+    <div
+      id="status"
+      class="panel p-5 flex flex-col gap-6 animate-fade-in"
+      hx-get="/partials/status"
+      hx-trigger="load, every 6s"
+      hx-swap="innerHTML"
+    >
       {% include "partials/status.html" %}
     </div>
 
@@ -62,7 +68,13 @@
     </div>
 
     <!-- Agent Settings -->
-    <div id="settings-panel" hx-get="/partials/settings" hx-trigger="load, every 10s" hx-swap="outerHTML">
+    <div
+      id="settings-panel"
+      class="panel flex flex-col animate-fade-in"
+      hx-get="/partials/settings"
+      hx-trigger="load, every 15s"
+      hx-swap="innerHTML"
+    >
       {% include "partials/settings.html" %}
     </div>
 
@@ -114,12 +126,24 @@
   <aside class="lg:col-span-3 flex flex-col gap-6 overflow-y-auto pr-2 scrollbar-hide">
     
     <!-- Action Queue -->
-    <div id="queue-panel" hx-get="/partials/queue" hx-trigger="load, every 3s" hx-swap="outerHTML">
+    <div
+      id="queue-panel"
+      class="panel flex flex-col animate-fade-in"
+      hx-get="/partials/queue"
+      hx-trigger="load, every 6s"
+      hx-swap="innerHTML"
+    >
       {% include "partials/queue.html" %}
     </div>
 
     <!-- Provider Wizard -->
-    <div id="providers-panel" hx-get="/partials/providers" hx-trigger="load, every 10s" hx-swap="outerHTML">
+    <div
+      id="providers-panel"
+      class="panel flex flex-col animate-fade-in"
+      hx-get="/partials/providers"
+      hx-trigger="load, every 15s"
+      hx-swap="innerHTML"
+    >
       {% include "partials/providers.html" %}
     </div>
 

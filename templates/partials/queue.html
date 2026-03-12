@@ -1,27 +1,19 @@
-<div
-  id="queue-panel"
-  class="panel flex flex-col animate-fade-in"
-  hx-get="/partials/queue"
-  hx-trigger="every 5s"
-  hx-swap="outerHTML"
-  style="animation-delay: 250ms"
->
-  <div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
-    <div class="flex items-center gap-2">
-       <i data-lucide="list-todo" class="w-3.5 h-3.5 text-void-700"></i>
-       <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Directives</h3>
-    </div>
-    <span class="text-[9px] font-mono font-bold text-void-700 uppercase tracking-widest">{{ queue | length }} Pending</span>
+<div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
+  <div class="flex items-center gap-2">
+     <i data-lucide="list-todo" class="w-3.5 h-3.5 text-void-700"></i>
+     <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Directives</h3>
+  </div>
+  <span class="text-[9px] font-mono font-bold text-void-700 uppercase tracking-widest">{{ queue | length }} Pending</span>
+</div>
+
+<div class="p-5 flex flex-col gap-5 max-h-[400px] overflow-y-auto scrollbar-hide">
+  <div class="flex gap-2">
+    <button class="btn-action btn-ghost flex-grow py-1.5" hx-post="/actions/run-next" hx-target="#queue-panel" hx-swap="innerHTML">
+      Execute Next
+    </button>
   </div>
 
-  <div class="p-5 flex flex-col gap-5 max-h-[400px] overflow-y-auto scrollbar-hide">
-    <div class="flex gap-2">
-      <button class="btn-action btn-ghost flex-grow py-1.5" hx-post="/actions/run-next" hx-target="#queue-panel" hx-swap="outerHTML">
-        Execute Next
-      </button>
-    </div>
-
-    <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/actions/add" hx-target="#queue-panel" hx-swap="outerHTML">
+    <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/actions/add" hx-target="#queue-panel" hx-swap="innerHTML">
       <label class="label-void">Manual Override</label>
       <input type="text" name="title" class="input-void" placeholder="Title" />
       <div class="grid grid-cols-2 gap-2">
@@ -36,64 +28,63 @@
       <button type="submit" class="btn-action btn-ghost w-full py-1.5">Queue Action</button>
     </form>
 
-    <div class="space-y-3">
-      {% if queue %}
-        {% for action in queue|reverse %}
-          <div class="group rounded-lg border border-white/[0.02] bg-void-850 p-3 space-y-2 hover:border-emerald-pulse/20 transition-all duration-300">
-            <div class="flex items-start justify-between gap-3">
-              <div class="space-y-0.5">
-                <p class="text-[11px] font-medium text-stardust leading-tight">{{ action.title }}</p>
-                <p class="text-[8px] font-mono uppercase tracking-widest text-void-700">
-                  {{ action.type }} // {{ action.status }}
-                </p>
-              </div>
-              
-              <div class="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                {% if action.status == "proposed" %}
-                  <button
-                    class="h-5 w-5 flex items-center justify-center rounded bg-emerald-pulse/10 text-emerald-pulse border border-emerald-pulse/20 hover:bg-emerald-pulse/20"
-                    hx-post="/actions/approve"
-                    hx-vals='{"action_id":"{{ action.id }}"}'
-                    hx-target="#queue-panel"
-                    hx-swap="outerHTML"
-                  >
-                    <i data-lucide="check" class="w-3 h-3"></i>
-                  </button>
-                  <button
-                    class="h-5 w-5 flex items-center justify-center rounded bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
-                    hx-post="/actions/reject"
-                    hx-vals='{"action_id":"{{ action.id }}"}'
-                    hx-target="#queue-panel"
-                    hx-swap="outerHTML"
-                  >
-                    <i data-lucide="x" class="w-3 h-3"></i>
-                  </button>
-                {% elif action.status == "approved" %}
-                  <button
-                    class="h-5 w-5 flex items-center justify-center rounded bg-emerald-pulse/10 text-emerald-pulse border border-emerald-pulse/20 hover:bg-emerald-pulse/20"
-                    hx-post="/actions/run-next"
-                    hx-target="#queue-panel"
-                    hx-swap="outerHTML"
-                  >
-                    <i data-lucide="play" class="w-3 h-3"></i>
-                  </button>
-                {% endif %}
-              </div>
+  <div class="space-y-3">
+    {% if queue %}
+      {% for action in queue|reverse %}
+        <div class="group rounded-lg border border-white/[0.02] bg-void-850 p-3 space-y-2 hover:border-emerald-pulse/20 transition-all duration-300">
+          <div class="flex items-start justify-between gap-3">
+            <div class="space-y-0.5">
+              <p class="text-[11px] font-medium text-stardust leading-tight">{{ action.title }}</p>
+              <p class="text-[8px] font-mono uppercase tracking-widest text-void-700">
+                {{ action.type }} // {{ action.status }}
+              </p>
             </div>
-
-            {% if action.result %}
-              <div class="text-[9px] text-mist/60 font-mono bg-void-900/50 p-2 rounded border border-white/[0.01] max-h-24 overflow-y-auto scrollbar-hide break-words">
-                {{ action.result }}
-              </div>
-            {% endif %}
-            {% if action.error %}
-              <div class="text-[9px] text-red-400/60 font-mono bg-red-500/5 p-2 rounded border border-red-500/10">{{ action.error }}</div>
-            {% endif %}
+            
+            <div class="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+              {% if action.status == "proposed" %}
+                <button
+                  class="h-5 w-5 flex items-center justify-center rounded bg-emerald-pulse/10 text-emerald-pulse border border-emerald-pulse/20 hover:bg-emerald-pulse/20"
+                  hx-post="/actions/approve"
+                  hx-vals='{"action_id":"{{ action.id }}"}'
+                  hx-target="#queue-panel"
+                  hx-swap="innerHTML"
+                >
+                  <i data-lucide="check" class="w-3 h-3"></i>
+                </button>
+                <button
+                  class="h-5 w-5 flex items-center justify-center rounded bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500/20"
+                  hx-post="/actions/reject"
+                  hx-vals='{"action_id":"{{ action.id }}"}'
+                  hx-target="#queue-panel"
+                  hx-swap="innerHTML"
+                >
+                  <i data-lucide="x" class="w-3 h-3"></i>
+                </button>
+              {% elif action.status == "approved" %}
+                <button
+                  class="h-5 w-5 flex items-center justify-center rounded bg-emerald-pulse/10 text-emerald-pulse border border-emerald-pulse/20 hover:bg-emerald-pulse/20"
+                  hx-post="/actions/run-next"
+                  hx-target="#queue-panel"
+                  hx-swap="innerHTML"
+                >
+                  <i data-lucide="play" class="w-3 h-3"></i>
+                </button>
+              {% endif %}
+            </div>
           </div>
-        {% endfor %}
-      {% else %}
-        <p class="text-[9px] text-void-800 font-mono italic text-center py-4 tracking-widest uppercase">Null Directives</p>
-      {% endif %}
-    </div>
+
+          {% if action.result %}
+            <div class="text-[9px] text-mist/60 font-mono bg-void-900/50 p-2 rounded border border-white/[0.01] max-h-24 overflow-y-auto scrollbar-hide break-words">
+              {{ action.result }}
+            </div>
+          {% endif %}
+          {% if action.error %}
+            <div class="text-[9px] text-red-400/60 font-mono bg-red-500/5 p-2 rounded border border-red-500/10">{{ action.error }}</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="text-[9px] text-void-800 font-mono italic text-center py-4 tracking-widest uppercase">Null Directives</p>
+    {% endif %}
   </div>
 </div>

@@ -1,64 +1,56 @@
-<div
-  id="settings-panel"
-  class="panel flex flex-col animate-fade-in"
-  hx-get="/partials/settings"
-  hx-trigger="every 10s"
-  hx-swap="outerHTML"
->
-  <div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
-    <div class="flex items-center gap-2">
-      <i data-lucide="sliders" class="w-3.5 h-3.5 text-void-700"></i>
-      <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Agent Settings</h3>
+<div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
+  <div class="flex items-center gap-2">
+    <i data-lucide="sliders" class="w-3.5 h-3.5 text-void-700"></i>
+    <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Agent Settings</h3>
+  </div>
+  <span class="text-[9px] font-mono font-bold text-void-700 uppercase tracking-widest">Runtime</span>
+</div>
+
+<form class="p-5 flex flex-col gap-4" hx-post="/settings/update" hx-target="#settings-panel" hx-swap="innerHTML">
+  <div class="grid grid-cols-2 gap-3">
+    <div class="space-y-1">
+      <label class="label-void">Loop Interval</label>
+      <input type="number" name="loop_interval_seconds" class="input-void" value="{{ settings.loop_interval_seconds }}" min="1" />
     </div>
-    <span class="text-[9px] font-mono font-bold text-void-700 uppercase tracking-widest">Runtime</span>
+    <div class="space-y-1">
+      <label class="label-void">Max Actions</label>
+      <input type="number" name="max_actions_per_loop" class="input-void" value="{{ settings.max_actions_per_loop }}" min="1" />
+    </div>
+    <div class="space-y-1">
+      <label class="label-void">Max Loops</label>
+      <input type="number" name="max_loops" class="input-void" value="{{ settings.max_loops }}" min="0" />
+    </div>
+    <div class="space-y-1">
+      <label class="label-void">Max Stalls</label>
+      <input type="number" name="max_stalls" class="input-void" value="{{ settings.max_stalls }}" min="1" />
+    </div>
   </div>
 
-  <form class="p-5 flex flex-col gap-4" hx-post="/settings/update" hx-target="#settings-panel" hx-swap="outerHTML">
-    <div class="grid grid-cols-2 gap-3">
-      <div class="space-y-1">
-        <label class="label-void">Loop Interval</label>
-        <input type="number" name="loop_interval_seconds" class="input-void" value="{{ settings.loop_interval_seconds }}" min="1" />
-      </div>
-      <div class="space-y-1">
-        <label class="label-void">Max Actions</label>
-        <input type="number" name="max_actions_per_loop" class="input-void" value="{{ settings.max_actions_per_loop }}" min="1" />
-      </div>
-      <div class="space-y-1">
-        <label class="label-void">Max Loops</label>
-        <input type="number" name="max_loops" class="input-void" value="{{ settings.max_loops }}" min="0" />
-      </div>
-      <div class="space-y-1">
-        <label class="label-void">Max Stalls</label>
-        <input type="number" name="max_stalls" class="input-void" value="{{ settings.max_stalls }}" min="1" />
-      </div>
-    </div>
-
-    <div class="grid grid-cols-2 gap-3">
-      <div class="space-y-1">
-        <label class="label-void">Shell Mode</label>
-        <select name="shell_mode" class="input-void">
-          <option value="allowlist" {% if settings.shell_mode == 'allowlist' %}selected{% endif %}>allowlist</option>
-          <option value="full" {% if settings.shell_mode == 'full' %}selected{% endif %}>full</option>
-        </select>
-      </div>
-      <div class="space-y-1">
-        <label class="label-void">Shell Timeout</label>
-        <input type="number" name="shell_timeout_seconds" class="input-void" value="{{ settings.shell_timeout_seconds }}" min="10" />
-      </div>
-    </div>
-
+  <div class="grid grid-cols-2 gap-3">
     <div class="space-y-1">
-      <label class="label-void">Shell Allowlist</label>
-      <input type="text" name="shell_allowlist" class="input-void" value="{{ settings.shell_allowlist }}" />
+      <label class="label-void">Shell Mode</label>
+      <select name="shell_mode" class="input-void">
+        <option value="allowlist" {% if settings.shell_mode == 'allowlist' %}selected{% endif %}>allowlist</option>
+        <option value="full" {% if settings.shell_mode == 'full' %}selected{% endif %}>full</option>
+      </select>
     </div>
+    <div class="space-y-1">
+      <label class="label-void">Shell Timeout</label>
+      <input type="number" name="shell_timeout_seconds" class="input-void" value="{{ settings.shell_timeout_seconds }}" min="10" />
+    </div>
+  </div>
 
-    <div class="flex items-center justify-between pt-2">
-      <label class="text-[9px] font-mono text-void-600 uppercase tracking-widest">
-        <input type="hidden" name="auto_execute_actions" value="false" />
-        <input type="checkbox" name="auto_execute_actions" value="true" {% if settings.auto_execute_actions %}checked{% endif %} class="mr-2" />
-        Auto Execute Actions
-      </label>
-      <button type="submit" class="btn-action btn-ghost">Apply</button>
-    </div>
-  </form>
-</div>
+  <div class="space-y-1">
+    <label class="label-void">Shell Allowlist</label>
+    <input type="text" name="shell_allowlist" class="input-void" value="{{ settings.shell_allowlist }}" />
+  </div>
+
+  <div class="flex items-center justify-between pt-2">
+    <label class="text-[9px] font-mono text-void-600 uppercase tracking-widest">
+      <input type="hidden" name="auto_execute_actions" value="false" />
+      <input type="checkbox" name="auto_execute_actions" value="true" {% if settings.auto_execute_actions %}checked{% endif %} class="mr-2" />
+      Auto Execute Actions
+    </label>
+    <button type="submit" class="btn-action btn-ghost">Apply</button>
+  </div>
+</form>
