@@ -96,6 +96,17 @@ Shell payload options:
 
 Use the in‑app wizard to add or update providers and switch the active model without restarting the server.
 
+Preset providers include:
+- OpenAI
+- OpenRouter
+- Together AI
+- Perplexity (v1 + v2)
+- LM Studio (local)
+- Ollama (local)
+- vLLM (local)
+
+The wizard auto‑fills base URLs and models for each preset, but everything remains editable. For OpenRouter, you can optionally set `HTTP-Referer` and `X-Title` headers in the wizard.
+
 ## Agent Settings 🎛️
 
 Use the settings panel to update loop interval, auto‑execute, stall limits, and shell mode at runtime. These settings are stored in `memory/runtime_settings.json`.

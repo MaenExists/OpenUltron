@@ -19,7 +19,13 @@ from openultron.actions import (
 from openultron.memory import list_memory_files, read_memory_file, latest_experience_entries
 from openultron.state import read_state, set_status, set_goal, update_state
 from openultron.runtime import load_runtime_settings, update_runtime_settings
-from openultron.providers import load_providers, get_active_provider, set_active_provider, upsert_provider
+from openultron.providers import (
+    load_providers,
+    get_active_provider,
+    set_active_provider,
+    upsert_provider,
+    PROVIDER_PRESETS,
+)
 
 app = FastAPI()
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -57,6 +63,7 @@ async def index(request: Request) -> HTMLResponse:
             "settings": runtime_settings,
             "providers": providers_data.get("providers", []),
             "active_provider": active_provider,
+            "provider_presets": PROVIDER_PRESETS,
         },
     )
 
@@ -151,6 +158,7 @@ async def partial_providers(request: Request) -> HTMLResponse:
             "request": request,
             "providers": providers_data.get("providers", []),
             "active_provider": active_provider,
+            "provider_presets": PROVIDER_PRESETS,
         },
     )
 
@@ -181,6 +189,15 @@ async def save_provider(request: Request) -> HTMLResponse:
             break
 
     api_key = str(form.get("api_key", "")).strip() or (existing.get("api_key") if existing else "")
+
+    headers: dict[str, str] = {}
+    referer = str(form.get("openrouter_referer", "")).strip()
+    title = str(form.get("openrouter_title", "")).strip()
+    if referer:
+        headers["HTTP-Referer"] = referer
+    if title:
+        headers["X-Title"] = title
+
     provider_payload = {
         "id": provider_id or (existing.get("id") if existing else ""),
         "label": label or (existing.get("label") if existing else ""),
@@ -189,6 +206,7 @@ async def save_provider(request: Request) -> HTMLResponse:
         "api_key": api_key,
         "organization": str(form.get("organization", "")).strip() or (existing.get("organization") if existing else ""),
         "project": str(form.get("project", "")).strip() or (existing.get("project") if existing else ""),
+        "headers": headers or (existing.get("headers") if existing else {}),
     }
     set_active = bool(form.get("set_active"))
     upsert_provider(provider_payload, set_active=set_active)

@@ -1,14 +1,16 @@
+{% set active_id = active_provider.id %}
+
 <div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
   <div class="flex items-center gap-2">
-    <i data-lucide="switch-camera" class="w-3.5 h-3.5 text-void-700"></i>
-    <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Provider Wizard</h3>
+    <i data-lucide="orbit" class="w-3.5 h-3.5 text-void-700"></i>
+    <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Provider Setup</h3>
   </div>
   <span class="text-[9px] font-mono font-bold text-void-700 uppercase tracking-widest">
     {{ active_provider.label or active_provider.id }}
   </span>
 </div>
 
-<div class="p-5 flex flex-col gap-5">
+<div class="p-5 flex flex-col gap-6" data-provider-wizard>
   <div class="space-y-2">
     <p class="label-void">Active Provider</p>
     <div class="rounded-lg border border-white/[0.03] bg-void-850 p-3 text-[10px] font-mono text-mist">
@@ -18,35 +20,157 @@
     </div>
   </div>
 
-    <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/providers/select" hx-target="#providers-panel" hx-swap="innerHTML">
-      <label class="label-void">Switch Provider</label>
-      <div class="flex gap-2">
-        <select name="provider_id" class="input-void flex-grow">
-          {% for provider in providers %}
-            <option value="{{ provider.id }}" {% if provider.id == active_provider.id %}selected{% endif %}>
-              {{ provider.label or provider.id }}
-            </option>
-          {% endfor %}
-        </select>
-        <button type="submit" class="btn-action btn-ghost px-3">Activate</button>
-      </div>
-    </form>
+  <div class="space-y-3">
+    <div class="flex items-center justify-between">
+      <p class="label-void">Choose Provider</p>
+      <span class="text-[8px] font-mono uppercase tracking-widest text-void-700">Presets</span>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      {% for preset in provider_presets %}
+        <button
+          type="button"
+          class="preset-card group rounded-lg border border-white/[0.03] bg-void-900 px-3 py-2 text-left transition-all hover:border-emerald-pulse/30 hover:bg-void-850"
+          data-provider-preset
+          data-id="{{ preset.id }}"
+          data-label="{{ preset.label }}"
+          data-base-url="{{ preset.base_url }}"
+          data-model="{{ preset.model }}"
+          data-kind="{{ preset.kind }}"
+          data-requires-key="{{ '1' if preset.requires_key else '0' }}"
+          data-docs="{{ preset.docs }}"
+        >
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] font-semibold text-stardust">{{ preset.label }}</span>
+            <span class="text-[8px] font-mono text-void-700 uppercase">{{ preset.kind }}</span>
+          </div>
+          <p class="text-[9px] text-void-600 mt-1 truncate">{{ preset.base_url }}</p>
+        </button>
+      {% endfor %}
+      <button
+        type="button"
+        class="preset-card group rounded-lg border border-dashed border-white/[0.05] bg-void-900 px-3 py-2 text-left transition-all hover:border-emerald-pulse/30 hover:bg-void-850"
+        data-provider-preset
+        data-id="custom"
+        data-label="Custom"
+        data-base-url=""
+        data-model=""
+        data-kind="custom"
+        data-requires-key="1"
+        data-docs=""
+      >
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] font-semibold text-stardust">Custom</span>
+          <span class="text-[8px] font-mono text-void-700 uppercase">any</span>
+        </div>
+        <p class="text-[9px] text-void-600 mt-1">OpenAI-compatible</p>
+      </button>
+    </div>
+  </div>
 
-    <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/providers/save" hx-target="#providers-panel" hx-swap="innerHTML">
-      <label class="label-void">Add / Update Provider</label>
-      <input type="text" name="label" class="input-void" placeholder="Label (e.g., OpenAI, Custom)" />
-      <input type="text" name="provider_id" class="input-void" placeholder="ID (optional, auto-generated)" />
-      <input type="text" name="base_url" class="input-void" placeholder="Base URL" />
-      <input type="text" name="model" class="input-void" placeholder="Model" />
-      <input type="password" name="api_key" class="input-void" placeholder="API Key" />
-      <input type="text" name="organization" class="input-void" placeholder="Organization (optional)" />
-      <input type="text" name="project" class="input-void" placeholder="Project (optional)" />
-      <div class="flex items-center justify-between">
-        <label class="text-[9px] font-mono text-void-600 uppercase tracking-widest">
-          <input type="checkbox" name="set_active" checked class="mr-2" />
-          Set Active
-        </label>
+  <form class="space-y-4" hx-post="/providers/save" hx-target="#providers-panel" hx-swap="innerHTML">
+    <div class="grid grid-cols-2 gap-3">
+      <div class="space-y-1">
+        <label class="label-void">Provider Label</label>
+        <input type="text" name="label" class="input-void" value="{{ active_provider.label }}" placeholder="OpenAI / Local / Custom" />
+      </div>
+      <div class="space-y-1">
+        <label class="label-void">Provider ID</label>
+        <input type="text" name="provider_id" class="input-void" value="{{ active_provider.id }}" placeholder="openai" />
+      </div>
+    </div>
+
+    <div class="space-y-1">
+      <label class="label-void">Base URL</label>
+      <input type="text" name="base_url" class="input-void" value="{{ active_provider.base_url }}" placeholder="https://api.openai.com/v1" />
+    </div>
+
+    <div class="space-y-1">
+      <label class="label-void">Model</label>
+      <input type="text" name="model" class="input-void" value="{{ active_provider.model }}" placeholder="gpt-4o-mini" />
+    </div>
+
+    <div class="space-y-1">
+      <label class="label-void">API Key</label>
+      <input type="password" name="api_key" class="input-void" placeholder="Required for cloud providers" />
+      <p class="text-[9px] text-void-600">Local servers usually accept any key or none.</p>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <div class="space-y-1">
+        <label class="label-void">Organization (optional)</label>
+        <input type="text" name="organization" class="input-void" value="{{ active_provider.organization }}" />
+      </div>
+      <div class="space-y-1">
+        <label class="label-void">Project (optional)</label>
+        <input type="text" name="project" class="input-void" value="{{ active_provider.project }}" />
+      </div>
+    </div>
+
+    <div class="space-y-1">
+      <label class="label-void">OpenRouter Headers (optional)</label>
+      <div class="grid grid-cols-2 gap-3">
+        <input type="text" name="openrouter_referer" class="input-void" placeholder="HTTP-Referer" />
+        <input type="text" name="openrouter_title" class="input-void" placeholder="X-Title" />
+      </div>
+    </div>
+
+    <div class="flex items-center justify-between pt-2">
+      <label class="text-[9px] font-mono text-void-600 uppercase tracking-widest">
+        <input type="checkbox" name="set_active" checked class="mr-2" />
+        Set Active
+      </label>
+      <div class="flex gap-2">
         <button type="submit" class="btn-action btn-ghost">Save Provider</button>
       </div>
-    </form>
+    </div>
+  </form>
+
+  <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/providers/select" hx-target="#providers-panel" hx-swap="innerHTML">
+    <label class="label-void">Switch Active</label>
+    <div class="flex gap-2">
+      <select name="provider_id" class="input-void flex-grow">
+        {% for provider in providers %}
+          <option value="{{ provider.id }}" {% if provider.id == active_id %}selected{% endif %}>
+            {{ provider.label or provider.id }}
+          </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn-action btn-ghost px-3">Activate</button>
+    </div>
+  </form>
+
+  <div class="rounded-lg border border-white/[0.03] bg-void-900 p-3 text-[9px] text-void-600">
+    <p class="uppercase tracking-widest text-[8px] font-bold text-void-700">Note</p>
+    <p>Most providers are OpenAI‑compatible. For non‑compatible APIs, use a gateway or proxy that exposes an OpenAI‑style `/v1` endpoint.</p>
+  </div>
 </div>
+
+<script>
+  (function initProviderWizard() {
+    const root = document.querySelector('[data-provider-wizard]');
+    if (!root) return;
+
+    const presetButtons = root.querySelectorAll('[data-provider-preset]');
+    const labelInput = root.querySelector('input[name="label"]');
+    const idInput = root.querySelector('input[name="provider_id"]');
+    const baseInput = root.querySelector('input[name="base_url"]');
+    const modelInput = root.querySelector('input[name="model"]');
+
+    presetButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        presetButtons.forEach((el) => el.classList.remove('ring-1', 'ring-emerald-pulse/40'));
+        btn.classList.add('ring-1', 'ring-emerald-pulse/40');
+
+        const label = btn.dataset.label || "";
+        const id = btn.dataset.id || "";
+        const baseUrl = btn.dataset.baseUrl || "";
+        const model = btn.dataset.model || "";
+
+        if (labelInput) labelInput.value = label;
+        if (idInput) idInput.value = id;
+        if (baseInput) baseInput.value = baseUrl;
+        if (modelInput) modelInput.value = model;
+      });
+    });
+  })();
+</script>

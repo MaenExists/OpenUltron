@@ -4,68 +4,9 @@ import json
 import re
 from typing import Dict, Any, List
 
-from openai import AsyncOpenAI
-
 from .config import settings
-from .providers import get_active_provider
+from .providers import get_active_provider, build_client
 from .runtime import load_runtime_settings
-
-
-class OpenAIClient:
-    def __init__(self, provider: Dict[str, Any]) -> None:
-        self.provider = provider
-        self.client: AsyncOpenAI | None = None
-        api_key = provider.get("api_key", "")
-        if api_key:
-            client_args: Dict[str, Any] = {"api_key": api_key}
-            base_url = provider.get("base_url")
-            if base_url:
-                client_args["base_url"] = base_url
-            organization = provider.get("organization")
-            if organization:
-                client_args["organization"] = organization
-            project = provider.get("project")
-            if project:
-                client_args["project"] = project
-            self.client = AsyncOpenAI(**client_args)
-
-    async def chat(self, messages: List[Dict[str, str]]) -> str:
-        if not self.client:
-            raise RuntimeError("Missing provider API key.")
-        model = self.provider.get("model") or settings.model
-        try:
-            response = await self.client.chat.responses.create(
-                model=model,
-                input=messages,
-                temperature=0.4,
-                max_output_tokens=800,
-                response_format={"type": "json_object"},
-            )
-        except Exception:
-            response = await self.client.chat.responses.create(
-                model=model,
-                input=messages,
-                temperature=0.4,
-                max_output_tokens=800,
-            )
-        text = _extract_text(response)
-        if not text:
-            raise RuntimeError("Empty response from model.")
-        return text
-
-
-def _extract_text(response: Any) -> str:
-    if hasattr(response, "output_text"):
-        return str(response.output_text or "").strip()
-    if hasattr(response, "output") and response.output:
-        output = response.output[0]
-        if hasattr(output, "content") and output.content:
-            item = output.content[0]
-            if hasattr(item, "text"):
-                return str(item.text or "").strip()
-    if hasattr(response, "choices") and response.choices:
-        return str(response.choices[0].message.get("content", "")).strip()
-    return ""
 
 
 class Brain:
@@ -98,12 +39,42 @@ class Brain:
 
         try:
             provider = get_active_provider()
-            client = OpenAIClient(provider)
-            content = await client.chat(messages)
+            client = build_client(provider)
+            model = provider.get("model") or settings.model
+            try:
+                response = await client.chat.responses.create(
+                    model=model,
+                    input=messages,
+                    temperature=0.4,
+                    max_output_tokens=800,
+                    response_format={"type": "json_object"},
+                )
+            except Exception:
+                response = await client.chat.responses.create(
+                    model=model,
+                    input=messages,
+                    temperature=0.4,
+                    max_output_tokens=800,
+                )
+            content = _extract_text(response)
             parsed = _parse_json_block(content)
             return _coerce_report(parsed)
         except Exception as exc:
             return _fallback_report(str(exc), state)
+
+
+def _extract_text(response: Any) -> str:
+    if hasattr(response, "output_text"):
+        return str(response.output_text or "").strip()
+    if hasattr(response, "output") and response.output:
+        output = response.output[0]
+        if hasattr(output, "content") and output.content:
+            item = output.content[0]
+            if hasattr(item, "text"):
+                return str(item.text or "").strip()
+    if hasattr(response, "choices") and response.choices:
+        return str(response.choices[0].message.get("content", "")).strip()
+    return ""
 
 
 def _parse_json_block(text: str) -> Dict[str, Any]:

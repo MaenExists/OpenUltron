@@ -62,7 +62,8 @@
     <style type="text/tailwindcss">
       @layer base {
         body {
-          @apply bg-void text-mist font-body antialiased selection:bg-emerald-pulse/30 selection:text-stardust;
+          @apply bg-void text-mist/90 font-body antialiased selection:bg-emerald-pulse/30 selection:text-stardust;
+          background-attachment: fixed;
         }
         h1, h2, h3, h4 {
           @apply font-display font-semibold text-stardust tracking-tight;
@@ -97,9 +98,71 @@
         .input-void {
           @apply w-full rounded-lg border border-white/[0.05] bg-void-800 px-3 py-2 text-xs text-stardust placeholder:text-void-600 focus:border-emerald-pulse/40 focus:outline-none focus:ring-1 focus:ring-emerald-pulse/20 transition-all;
         }
+        /* Custom number input arrows */
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+          @apply opacity-20 hover:opacity-100 cursor-pointer transition-opacity invert;
+        }
+        
+        select.input-void {
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%234b5563'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 0.75rem center;
+          background-size: 0.85rem;
+          padding-right: 2.5rem;
+        }
+        /* Style dropdown options */
+        select.input-void option {
+          @apply bg-void-900 text-stardust py-2;
+        }
+
         .label-void {
           @apply text-[10px] uppercase tracking-[0.2em] font-bold text-void-600;
         }
+
+        .logo-text {
+          @apply font-display font-black tracking-[-0.05em] text-6xl transition-all duration-700 flex items-baseline select-none;
+          filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.03));
+        }
+        .logo-text:hover {
+          @apply tracking-[-0.02em];
+          filter: drop-shadow(0 0 25px rgba(16, 185, 129, 0.15));
+        }
+        .logo-open {
+          @apply text-stone-200;
+          text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+        }
+        .logo-ultron {
+          @apply text-stone-400;
+          background: linear-gradient(to bottom, #f8fafc, #94a3b8, #475569);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.05));
+        }
+      }
+
+      .stars-container {
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background: radial-gradient(1.5px 1.5px at 20px 30px, #fff, rgba(0,0,0,0)),
+                    radial-gradient(1.8px 1.8px at 40px 70px, #fff, rgba(0,0,0,0)),
+                    radial-gradient(1.5px 1.5px at 50px 40px, #fff, rgba(0,0,0,0)),
+                    radial-gradient(2px 2px at 80px 10px, #fff, rgba(0,0,0,0)),
+                    radial-gradient(2.5px 2.5px at 10px 80px, #fff, rgba(0,0,0,0)),
+                    radial-gradient(1.5px 1.5px at 90px 90px, #fff, rgba(0,0,0,0)),
+                    radial-gradient(1.8px 1.8px at 25px 15px, #fff, rgba(0,0,0,0)),
+                    radial-gradient(1.5px 1.5px at 65px 55px, #fff, rgba(0,0,0,0));
+        background-size: 200px 200px;
+        opacity: 0.35;
+        animation: stars-drift 120s linear infinite;
+      }
+
+      @keyframes stars-drift {
+        from { background-position: 0 0; }
+        to { background-position: 300px 600px; }
       }
 
       .grain-overlay {
@@ -136,17 +199,21 @@
     </style>
   </head>
   <body class="relative min-h-screen overflow-x-hidden flex flex-col">
+    <div class="stars-container"></div>
     <div class="grain-overlay"></div>
     <div class="radial-pulse"></div>
 
-    <header class="relative z-40 flex items-center justify-between px-6 py-4 border-b border-white/[0.03] bg-void/50 backdrop-blur-md sticky top-0">
-      <div class="flex items-center gap-4">
-        <div class="h-8 w-8 flex items-center justify-center rounded-lg bg-emerald-pulse/5 border border-emerald-pulse/20">
-          <i data-lucide="shield" class="w-4 h-4 text-emerald-pulse"></i>
-        </div>
+    <header class="relative z-40 flex items-center justify-between px-6 py-8 border-b border-white/[0.03] bg-void/50 backdrop-blur-md sticky top-0">
+      <div class="flex items-center gap-6">
         <div class="flex flex-col">
-          <span class="font-display font-bold text-stardust tracking-tight text-lg leading-none">OPENULTRON</span>
-          <span class="text-[8px] uppercase tracking-[0.3em] text-void-600 font-bold mt-1">Autonomous intelligence v1.4</span>
+          <div class="logo-text">
+            <span class="logo-open">OPEN</span><span class="logo-ultron">ULTRON</span>
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <span class="text-[8px] uppercase tracking-[0.6em] text-stone-500 font-bold">Autonomous Intelligence Matrix</span>
+            <div class="h-[1px] w-6 bg-stone-800"></div>
+            <span class="text-[8px] font-mono text-stone-600">v1.4.2_LTS</span>
+          </div>
         </div>
       </div>
       
