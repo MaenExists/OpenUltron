@@ -1,16 +1,25 @@
-# OpenUltron
+# OpenUltron 🤖⚡
 
-OpenUltron is a persistent agent that lives in a filesystem, thinks with an LLM, learns from experience, and gradually improves itself through interaction with the world.
+A persistent, filesystem-native agent that **observes → thinks → acts → learns** and builds its own memory over time.
 
-This build uses:
-- Python + FastAPI for the server
-- HTMX for live UI updates
-- Tailwind CSS via CDN for the neon-obsidian visual system
-- SiliconFlow API as the LLM brain (default model: `openai/gpt-oss-120b`)
-- `python-multipart` for form handling
-- Server-Sent Events (SSE) for the live experience feed
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
+![HTMX](https://img.shields.io/badge/HTMX-UI-0F172A)
+![License](https://img.shields.io/badge/License-MIT-22C55E)
 
-## Quick Start
+## Why OpenUltron ✨
+
+OpenUltron is built for **long‑running, self‑improving agent workflows**. It stores memory as plain markdown so both humans and models can read, edit, and evolve it. The UI streams the loop live, and action execution is **explicitly approved** (or auto‑approved via a strict allowlist).
+
+## Features ✅
+
+- **Persistent memory** in markdown: experiences, knowledge, summaries, and actions
+- **Live UI** powered by FastAPI + HTMX + SSE
+- **Action approval flow** with optional auto‑execute (allowlist only)
+- **Model‑agnostic brain** (SiliconFlow by default)
+- **Human‑readable state** stored in `memory/state.md`
+
+## Quick Start 🚀
 
 1. Create a venv and install dependencies:
 
@@ -20,13 +29,12 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Export your SiliconFlow key:
+2. Configure environment:
 
 ```bash
-export SILICONFLOW_API_KEY="your_key_here"
+cp .env.example .env
+# then edit .env
 ```
-
-Or create a `.env` file (recommended for local dev). Use `.env.example` as a template.
 
 3. Run the server:
 
@@ -36,26 +44,26 @@ uvicorn app:app --reload
 
 Open `http://127.0.0.1:8000` in your browser.
 
-## Environment Variables
+## Environment Variables 🧩
 
-- `SILICONFLOW_API_KEY`: required to call SiliconFlow.
-- `SILICONFLOW_MODEL`: optional, default `openai/gpt-oss-120b`.
-- `SILICONFLOW_BASE_URL`: optional, default `https://api.siliconflow.com/v1`.
-- `OPENULTRON_LOOP_INTERVAL`: loop cadence in seconds, default `12`.
-- `OPENULTRON_AUTO_EXECUTE`: when `true`, auto-approves and runs up to 3 actions per loop.
-- `OPENULTRON_SHELL_ALLOWLIST`: comma-separated shell commands allowed for action execution.
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SILICONFLOW_API_KEY` | — | API key (required) |
+| `SILICONFLOW_MODEL` | `openai/gpt-oss-120b` | LLM model |
+| `SILICONFLOW_BASE_URL` | `https://api.siliconflow.com/v1` | API base URL |
+| `OPENULTRON_LOOP_INTERVAL` | `12` | Loop cadence (seconds) |
+| `OPENULTRON_AUTO_EXECUTE` | `false` | Auto‑approve actions (allowlist only) |
+| `OPENULTRON_SHELL_ALLOWLIST` | `ls,rg,cat,sed,python,python3,pip,git,uvicorn,pytest` | Allowed shell commands |
 
-## How The Loop Works
-
-The background loop runs:
+## How The Loop Works 🔁
 
 `observe → think → act → evaluate → reflect → improve → repeat`
 
-Each iteration writes a timestamped entry into `memory/experiences/YYYY-MM-DD.md`. State lives in `memory/state.md`. The UI reads these markdown files directly.
+Each loop iteration writes a timestamped entry into `memory/experiences/YYYY-MM-DD.md`. The UI reads markdown files directly and streams updates via SSE.
 
-## Action Execution
+## Action Execution 🛡️
 
-The brain proposes actions (shell commands, file writes, web research) which are queued in `memory/actions_queue.md`. You approve actions in the UI, then execute them. Execution logs land in `memory/actions/YYYY-MM-DD.md`.
+Actions are proposed by the brain, stored in `memory/actions_queue.md`, and **must be approved** in the UI unless `OPENULTRON_AUTO_EXECUTE=true`.
 
 Supported action types:
 - `shell` (allowlisted commands only)
@@ -63,6 +71,52 @@ Supported action types:
 - `write_memory`, `append_memory`
 - `search_web`, `fetch_url`
 
-## Notes
+Execution logs land in `memory/actions/YYYY-MM-DD.md`.
 
-Tailwind’s CDN build is intended for quick iteration. If you later want to productionize, switch to a build step for Tailwind.
+## Repo Map 🗂️
+
+```text
+openultron/
+  actions.py        # action parsing + execution
+  agent.py          # loop control
+  brain.py          # model calls + response parsing
+  memory.py         # memory IO helpers
+  state.py          # loop state tracking
+  utils.py          # shared helpers
+memory/
+  experiences/      # daily loop logs
+  knowledge/        # distilled notes
+  summaries/        # rollups
+  actions/          # execution logs
+  actions_queue.md  # pending actions
+  state.md          # current state
+templates/          # HTMX UI templates
+app.py              # FastAPI server
+```
+
+## Development 🧪
+
+Run tests:
+
+```bash
+pytest
+```
+
+## Roadmap 🧭
+
+- Action sandboxing per skill
+- Memory compression + retrieval ranking
+- Multi‑agent collaboration
+- Pluggable tool registry
+
+## Contributing 🤝
+
+See `CONTRIBUTING.md` for setup, conventions, and PR flow.
+
+## Security 🔐
+
+Please review `SECURITY.md` for reporting guidelines.
+
+## License 📄
+
+MIT — see `LICENSE`.
