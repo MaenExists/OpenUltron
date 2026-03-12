@@ -222,22 +222,58 @@ def _finalize_action(action: Action, result: str = "", error: str = "") -> Actio
     return action
 
 
+def _resolve_cwd(value: Any) -> Path:
+    if not value:
+        return ROOT
+    if isinstance(value, str):
+        return _safe_join_root(value)
+    raise ValueError("Invalid cwd format.")
+
+
 async def _execute_shell(payload: Dict[str, Any]) -> str:
     cmd = payload.get("cmd")
     if not cmd:
         raise ValueError("Missing cmd for shell action.")
+    use_shell = bool(payload.get("use_shell", False))
+    cwd = _resolve_cwd(payload.get("cwd"))
+    timeout = int(payload.get("timeout", settings.shell_timeout_seconds))
+
+    if use_shell:
+        if settings.shell_mode != "full":
+            raise ValueError("Shell execution requires OPENULTRON_SHELL_MODE=full.")
+        if not isinstance(cmd, str):
+            raise ValueError("Shell execution requires cmd as a string.")
+
+        def _run_shell() -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                cmd,
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout,
+                shell=True,
+                executable="/bin/bash",
+            )
+
+        completed = await asyncio.to_thread(_run_shell)
+        output = completed.stdout + completed.stderr
+        return output.strip() or "(no output)"
+
     parts = _normalize_command(cmd)
-    allowlist = settings.shell_allowlist
-    if not parts or parts[0] not in allowlist:
-        raise ValueError(f"Command '{parts[0] if parts else ''}' not allowed.")
+    if settings.shell_mode != "full":
+        allowlist = settings.shell_allowlist
+        if not parts or parts[0] not in allowlist:
+            raise ValueError(f"Command '{parts[0] if parts else ''}' not allowed.")
 
     def _run() -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             parts,
-            cwd=str(ROOT),
+            cwd=str(cwd),
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout,
         )
 
     completed = await asyncio.to_thread(_run)
@@ -322,15 +358,26 @@ async def _search_web(payload: Dict[str, Any]) -> str:
         results.append(line)
         if len(results) >= max_results:
             break
-    return "\n".join(results) or "No results."
+    output = "\n".join(results) or "No results."
+    save_to = payload.get("save_to")
+    if save_to:
+        target = safe_join(MEMORY_ROOT, save_to)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(output, encoding="utf-8")
+    return output
+
 
 
 async def _fetch_url(payload: Dict[str, Any]) -> str:
     url = str(payload.get("url", "")).strip()
     if not url:
         raise ValueError("Missing url for fetch_url.")
+    method = str(payload.get("method", "GET")).upper()
+    headers = payload.get("headers") or {}
+    data = payload.get("data")
+    params = payload.get("params")
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(url)
+        response = await client.request(method, url, headers=headers, data=data, params=params)
         response.raise_for_status()
         text = response.text
     save_to = payload.get("save_to")
@@ -361,6 +408,25 @@ def _append_action_log(action: Action) -> None:
         entry.append("Error:")
         entry.append(action.error)
     with log_file.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(entry) + "\n")
+    if action.error:
+        _append_failure_log(action)
+
+
+def _append_failure_log(action: Action) -> None:
+    fail_log = MEMORY_ROOT / "knowledge" / "failures.md"
+    fail_log.parent.mkdir(parents=True, exist_ok=True)
+    header = "# Failures\n"
+    if not fail_log.exists():
+        fail_log.write_text(header, encoding="utf-8")
+    entry = [
+        f"\n\n## {utc_now_iso()}",
+        f"Action: {action.title}",
+        f"Type: {action.type}",
+        "Error:",
+        action.error,
+    ]
+    with fail_log.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(entry) + "\n")
 
 

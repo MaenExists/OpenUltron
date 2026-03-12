@@ -1,6 +1,6 @@
 # OpenUltron 🤖⚡
 
-A persistent, filesystem-native agent that **observes → thinks → acts → learns** and builds its own memory over time.
+A persistent, filesystem‑native agent that **observes → thinks → acts → learns** and builds its own memory over time.
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
@@ -13,11 +13,11 @@ OpenUltron is built for **long‑running, self‑improving agent workflows**. It
 
 ## Features ✅
 
+- **Provider‑agnostic LLM** via the OpenAI SDK (point `OPENAI_BASE_URL` to any OpenAI‑compatible provider)
 - **Persistent memory** in markdown: experiences, knowledge, summaries, and actions
 - **Live UI** powered by FastAPI + HTMX + SSE
-- **Action approval flow** with optional auto‑execute (allowlist only)
-- **Model‑agnostic brain** (SiliconFlow by default)
-- **Human‑readable state** stored in `memory/state.md`
+- **Action approval flow** with optional auto‑execute
+- **Loop guardrails** to prevent endless stalls
 
 ## Quick Start 🚀
 
@@ -48,11 +48,18 @@ Open `http://127.0.0.1:8000` in your browser.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SILICONFLOW_API_KEY` | — | API key (required) |
-| `SILICONFLOW_MODEL` | `openai/gpt-oss-120b` | LLM model |
-| `SILICONFLOW_BASE_URL` | `https://api.siliconflow.com/v1` | API base URL |
+| `OPENAI_API_KEY` | — | API key (required) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | LLM model |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API base URL for OpenAI‑compatible providers |
+| `OPENAI_ORG` | — | Optional org ID |
+| `OPENAI_PROJECT` | — | Optional project ID |
 | `OPENULTRON_LOOP_INTERVAL` | `12` | Loop cadence (seconds) |
-| `OPENULTRON_AUTO_EXECUTE` | `false` | Auto‑approve actions (allowlist only) |
+| `OPENULTRON_AUTO_EXECUTE` | `false` | Auto‑approve actions |
+| `OPENULTRON_MAX_ACTIONS_PER_LOOP` | `5` | Execution cap per loop |
+| `OPENULTRON_MAX_LOOPS` | `0` | Hard loop cap (0 = unlimited) |
+| `OPENULTRON_MAX_STALLS` | `3` | Auto‑pause if stalling |
+| `OPENULTRON_SHELL_MODE` | `allowlist` | `allowlist` or `full` |
+| `OPENULTRON_SHELL_TIMEOUT` | `120` | Shell timeout seconds |
 | `OPENULTRON_SHELL_ALLOWLIST` | `ls,rg,cat,sed,python,python3,pip,git,uvicorn,pytest` | Allowed shell commands |
 
 ## How The Loop Works 🔁
@@ -66,12 +73,22 @@ Each loop iteration writes a timestamped entry into `memory/experiences/YYYY-MM-
 Actions are proposed by the brain, stored in `memory/actions_queue.md`, and **must be approved** in the UI unless `OPENULTRON_AUTO_EXECUTE=true`.
 
 Supported action types:
-- `shell` (allowlisted commands only)
+- `shell` (allowlisted by default, full access if `OPENULTRON_SHELL_MODE=full`)
 - `write_file`, `append_file`
 - `write_memory`, `append_memory`
 - `search_web`, `fetch_url`
 
-Execution logs land in `memory/actions/YYYY-MM-DD.md`.
+Shell payload options:
+- `cmd`: command string or list
+- `cwd`: optional project‑relative working dir
+- `timeout`: optional seconds
+- `use_shell`: only when `OPENULTRON_SHELL_MODE=full`
+
+## Memory System 🧠
+
+- **Experiences**: loop logs per day
+- **Knowledge**: lessons, unknowns, assumptions, failures
+- **Skills**: reusable playbooks in `memory/skills/`
 
 ## Repo Map 🗂️
 
@@ -85,7 +102,8 @@ openultron/
   utils.py          # shared helpers
 memory/
   experiences/      # daily loop logs
-  knowledge/        # distilled notes
+  knowledge/        # lessons + unknowns + failures
+  skills/           # playbooks and procedures
   summaries/        # rollups
   actions/          # execution logs
   actions_queue.md  # pending actions

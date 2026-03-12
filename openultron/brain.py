@@ -2,55 +2,79 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 
-import httpx
+from openai import AsyncOpenAI
 
 from .config import settings
 
 
-class SiliconFlowClient:
+class OpenAIClient:
     def __init__(self) -> None:
-        self.api_key = settings.api_key
-        self.base_url = settings.base_url.rstrip("/")
+        self.client: AsyncOpenAI | None = None
+        if settings.api_key:
+            client_args: Dict[str, Any] = {"api_key": settings.api_key}
+            if settings.base_url:
+                client_args["base_url"] = settings.base_url
+            if settings.organization:
+                client_args["organization"] = settings.organization
+            if settings.project:
+                client_args["project"] = settings.project
+            self.client = AsyncOpenAI(**client_args)
 
-    async def chat(self, model: str, messages: list[dict[str, str]]) -> Dict[str, Any]:
-        if not self.api_key:
-            raise RuntimeError("Missing SILICONFLOW_API_KEY.")
-        url = f"{self.base_url}/chat/completions"
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.4,
-            "max_tokens": 800,
-        }
-        async with httpx.AsyncClient(timeout=40) as client:
-            response = await client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            return response.json()
+    async def chat(self, model: str, messages: List[Dict[str, str]]) -> str:
+        if not self.client:
+            raise RuntimeError("Missing OPENAI_API_KEY.")
+        response = await self.client.chat.responses.create(
+            model=model,
+            input=messages,
+            temperature=0.4,
+            max_output_tokens=800,
+            response_format={"type": "json_object"},
+        )
+        text = _extract_text(response)
+        if not text:
+            raise RuntimeError("Empty response from model.")
+        return text
+
+
+def _extract_text(response: Any) -> str:
+    if hasattr(response, "output_text"):
+        return str(response.output_text or "").strip()
+    if hasattr(response, "output") and response.output:
+        output = response.output[0]
+        if hasattr(output, "content") and output.content:
+            item = output.content[0]
+            if hasattr(item, "text"):
+                return str(item.text or "").strip()
+    if hasattr(response, "choices") and response.choices:
+        return str(response.choices[0].message.get("content", "")).strip()
+    return ""
 
 
 class Brain:
     def __init__(self) -> None:
-        self.client = SiliconFlowClient()
+        self.client = OpenAIClient()
         self.model = settings.model
 
     async def generate_loop_report(self, state: Dict[str, str], context: str) -> Dict[str, Any]:
         system = (
-            "You are OpenUltron's brain. Return JSON with keys: "
-            "observe, think, act, evaluate, reflect, improve, next_focus, summary, actions. "
-            "Values must be concise strings, max 80 words each. "
-            "actions must be a JSON array of objects with: type, title, payload. "
+            "You are OpenUltron's brain. Return a STRICT JSON object with keys: "
+            "observe, think, act, evaluate, reflect, improve, next_focus, summary, "
+            "unknowns, assumptions, learnings, goal_progress, goal_complete, actions. "
+            "All values must be concise. unknowns/assumptions/learnings should be short lists or sentences. "
+            "goal_complete must be a boolean. actions must be an array of objects with: type, title, payload. "
             "Allowed action types: shell, write_file, append_file, write_memory, append_memory, search_web, fetch_url. "
-            "When you lack knowledge, create search_web then fetch_url actions, then write_memory to store notes. "
+            "Be truthful: explicitly state what you do not know and what you assume. "
+            "When you lack knowledge, propose search_web then fetch_url actions and add the unknowns. "
             "If no actions are needed, return actions as an empty list."
         )
         user = (
             f"Current goal: {state.get('current_goal')}\n"
             f"Loop count: {state.get('loop_count')}\n"
-            f"Last summary: {state.get('last_summary')}\n\n"
-            f"Recent memory excerpt:\n{context}"
+            f"Last summary: {state.get('last_summary')}\n"
+            f"Last error: {state.get('last_error')}\n\n"
+            f"Context and memory:\n{context}"
         )
         messages = [
             {"role": "system", "content": system},
@@ -58,8 +82,7 @@ class Brain:
         ]
 
         try:
-            response = await self.client.chat(self.model, messages)
-            content = response["choices"][0]["message"]["content"]
+            content = await self.client.chat(self.model, messages)
             parsed = _parse_json_block(content)
             return _coerce_report(parsed)
         except Exception as exc:
@@ -76,16 +99,45 @@ def _parse_json_block(text: str) -> Dict[str, Any]:
         raise
 
 
+def _normalize_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "n/a", "no"}:
+        return []
+    return [text]
+
+
 def _coerce_report(data: Dict[str, Any]) -> Dict[str, Any]:
-    keys = ["observe", "think", "act", "evaluate", "reflect", "improve", "next_focus", "summary"]
+    string_keys = [
+        "observe",
+        "think",
+        "act",
+        "evaluate",
+        "reflect",
+        "improve",
+        "next_focus",
+        "summary",
+        "goal_progress",
+    ]
     report: Dict[str, Any] = {}
-    for key in keys:
+    for key in string_keys:
         value = data.get(key, "")
         report[key] = str(value).strip() or "Not provided."
+
+    report["unknowns"] = _normalize_list(data.get("unknowns"))
+    report["assumptions"] = _normalize_list(data.get("assumptions"))
+    report["learnings"] = _normalize_list(data.get("learnings"))
+
+    goal_complete = data.get("goal_complete", False)
+    report["goal_complete"] = bool(goal_complete)
+
     actions = data.get("actions", [])
     if not isinstance(actions, list):
         actions = []
-    report["actions"] = actions[:5]
+    report["actions"] = actions[: settings.max_actions_per_loop]
     return report
 
 
@@ -95,9 +147,14 @@ def _fallback_report(error: str, state: Dict[str, str]) -> Dict[str, Any]:
         "think": f"Operating in offline mode. Error: {error}",
         "act": "Write a minimal loop entry and wait for API access.",
         "evaluate": "Offline output is limited but consistent.",
-        "reflect": "Ensure SiliconFlow API key is configured.",
+        "reflect": "Ensure OPENAI_API_KEY is configured.",
         "improve": "Configure the API key to enable learning loops.",
         "next_focus": state.get("current_goal", "Define a goal."),
         "summary": "Offline loop entry recorded.",
+        "unknowns": ["Model response unavailable."],
+        "assumptions": ["System is running without external LLM."],
+        "learnings": [],
+        "goal_progress": "Blocked on model access.",
+        "goal_complete": False,
         "actions": [],
     }

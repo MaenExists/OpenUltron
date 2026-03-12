@@ -16,6 +16,10 @@ DEFAULT_STATE: Dict[str, str] = {
     "last_cycle": "Never",
     "last_action": "None",
     "last_summary": "Awaiting first loop.",
+    "last_summary_fingerprint": "",
+    "last_progress_at": "Never",
+    "stall_count": "0",
+    "last_goal_complete": "false",
     "last_error": "",
 }
 
@@ -27,6 +31,10 @@ STATE_ORDER = [
     "last_cycle",
     "last_action",
     "last_summary",
+    "last_summary_fingerprint",
+    "last_progress_at",
+    "stall_count",
+    "last_goal_complete",
     "last_error",
 ]
 
