@@ -1,14 +1,28 @@
-<div class="group relative space-y-3 transition-all">
-  <div class="flex items-center justify-between gap-4">
-    <div class="flex items-center gap-2">
-      <div class="h-[1px] w-4 bg-neon/30 group-hover:w-8 transition-all"></div>
-      <span class="text-[10px] font-mono text-neon/50 uppercase tracking-widest">{{ entry.timestamp }}</span>
-    </div>
+<div class="group flex gap-4 animate-fade-in">
+  <div class="flex flex-col items-center pt-1.5">
+    <div class="h-1.5 w-1.5 rounded-full bg-void-700 group-hover:bg-emerald-pulse transition-colors"></div>
+    <div class="w-px flex-grow bg-void-800 my-1 group-last:hidden"></div>
   </div>
   
-  <div class="pl-6 border-l border-white/5 group-hover:border-neon/30 transition-all">
-    <p class="text-sm text-slate-300 leading-relaxed font-mono whitespace-pre-wrap">
+  <div class="flex flex-col gap-1 flex-grow min-w-0">
+    <div class="flex items-center gap-3">
+      <span class="text-[9px] font-bold text-void-700 tracking-tighter uppercase whitespace-nowrap">
+        {{ entry.timestamp.split('T')[1].split('.')[0] if 'T' in entry.timestamp else entry.timestamp }}
+      </span>
+      <div class="h-px flex-grow bg-white/[0.02]"></div>
+      <span class="text-[9px] font-bold text-void-700 uppercase tracking-[0.2em]">
+        {{ entry.type or "Experience" }}
+      </span>
+    </div>
+    
+    <div class="text-mist/90 selection:bg-emerald-pulse/20 leading-relaxed break-words font-mono">
       {{ entry.body }}
-    </p>
+    </div>
+
+    {% if entry.metadata %}
+      <div class="mt-2 rounded border border-white/[0.03] bg-void-850/50 p-2 overflow-x-auto scrollbar-hide">
+        <pre class="text-[9px] text-void-600 leading-tight"><code>{{ entry.metadata | tojson(indent=2) }}</code></pre>
+      </div>
+    {% endif %}
   </div>
 </div>

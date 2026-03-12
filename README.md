@@ -18,6 +18,8 @@ OpenUltron is built for **long‑running, self‑improving agent workflows**. It
 - **Live UI** powered by FastAPI + HTMX + SSE
 - **Action approval flow** with optional auto‑execute
 - **Loop guardrails** to prevent endless stalls
+- **Provider wizard** to configure and switch LLM providers at runtime
+- **Runtime settings panel** for loop cadence, stalls, and shell safety
 
 ## Quick Start 🚀
 
@@ -89,6 +91,14 @@ Shell payload options:
 - **Experiences**: loop logs per day
 - **Knowledge**: lessons, unknowns, assumptions, failures
 - **Skills**: reusable playbooks in `memory/skills/`
+
+## Provider Wizard 🔌
+
+Use the in‑app wizard to add or update providers and switch the active model without restarting the server.
+
+## Agent Settings 🎛️
+
+Use the settings panel to update loop interval, auto‑execute, stall limits, and shell mode at runtime. These settings are stored in `memory/runtime_settings.json`.
 
 ## Repo Map 🗂️
 

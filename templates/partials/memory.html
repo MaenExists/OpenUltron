@@ -1,9 +1,18 @@
-<div id="memory-panel" class="space-y-4">
-  {% if memory_content %}
-    <div class="rounded-xl bg-obsidian-950/50 p-6 border border-white/5 font-mono text-sm text-slate-400 leading-relaxed overflow-x-auto">
-      {{ memory_content | replace("\n", "<br>") | safe }}
+<div id="memory-panel" class="animate-fade-in">
+  <div class="flex flex-col gap-4">
+    <div class="flex items-center justify-between">
+       <span class="text-[9px] font-mono text-void-700 uppercase tracking-widest">{{ selected_path or "No file selected" }}</span>
+       {% if selected_path %}
+          <i data-lucide="lock" class="w-3 h-3 text-void-800"></i>
+       {% endif %}
     </div>
-  {% else %}
-    <p class="text-xs text-slate-500 font-mono italic">Sector empty or inaccessible.</p>
-  {% endif %}
+    
+    <div class="rounded-lg border border-white/[0.02] bg-void-950 p-4 font-mono text-[10px] leading-relaxed text-mist/80 selection:bg-emerald-pulse/20 overflow-x-auto">
+      {% if memory_content %}
+        <pre class="whitespace-pre-wrap"><code>{{ memory_content }}</code></pre>
+      {% else %}
+        <p class="italic text-void-800 text-center py-8">Vault fragment empty or inaccessible.</p>
+      {% endif %}
+    </div>
+  </div>
 </div>

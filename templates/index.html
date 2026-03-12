@@ -1,125 +1,155 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[calc(100vh-180px)]">
   
-  <!-- Left Column: Core Control & Status -->
-  <div class="lg:col-span-4 flex flex-col gap-8">
+  <!-- Left Column: System Heartbeat & Controls -->
+  <aside class="lg:col-span-3 flex flex-col gap-6 overflow-y-auto pr-2 scrollbar-hide">
     
-    <!-- Model Status Panel -->
-    {% include "partials/status.html" %}
+    <!-- System Pulse -->
+    <div id="status" hx-get="/partials/status" hx-trigger="load, every 3s" hx-swap="outerHTML">
+      {% include "partials/status.html" %}
+    </div>
 
-    <!-- Control Surface -->
-    <div class="glass-panel p-6 flex flex-col gap-6">
+    <!-- Core Directives -->
+    <div class="panel p-5 flex flex-col gap-6 animate-fade-in" style="animation-delay: 100ms">
       <div class="flex items-center justify-between">
-        <h3 class="text-lg">Control Surface</h3>
-        <span class="label-caps">Loop #{{ state.loop_count }}</span>
+        <h3 class="text-xs font-display uppercase tracking-widest text-stardust">Control Surface</h3>
+        <i data-lucide="cpu" class="w-3.5 h-3.5 text-void-700"></i>
       </div>
       
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-1 gap-2">
         <button 
-          class="btn-primary flex items-center justify-center gap-2"
+          class="btn-action btn-emerald w-full"
           hx-post="/control/start" 
           hx-target="#status" 
           hx-swap="outerHTML"
         >
-          <i data-lucide="play" class="w-4 h-4"></i>
-          Initialize
+          <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+          Initialize Core
         </button>
-        <button 
-          class="btn-secondary flex items-center justify-center gap-2"
-          hx-post="/control/pause" 
-          hx-target="#status" 
-          hx-swap="outerHTML"
-        >
-          <i data-lucide="pause" class="w-4 h-4"></i>
-          Suspend
-        </button>
-      </div>
-      
-      <button 
-        class="btn-secondary w-full flex items-center justify-center gap-2"
-        hx-post="/control/step" 
-        hx-target="#status" 
-        hx-swap="outerHTML"
-      >
-        <i data-lucide="skip-forward" class="w-4 h-4"></i>
-        Execute Single Cycle
-      </button>
-
-      <form class="space-y-4 pt-4 border-t border-white/5" hx-post="/control/goal" hx-target="#status" hx-swap="outerHTML">
-        <label class="label-caps">Objective Directives</label>
-        <div class="flex flex-col gap-3">
-          <textarea 
-            name="goal" 
-            class="input-cyber min-h-[100px] resize-none"
-            placeholder="Define the next prime directive..."
-          >{{ state.current_goal }}</textarea>
-          <button type="submit" class="btn-secondary w-full">Update Directives</button>
+        <div class="grid grid-cols-2 gap-2">
+           <button 
+            class="btn-action btn-ghost"
+            hx-post="/control/pause" 
+            hx-target="#status" 
+            hx-swap="outerHTML"
+          >
+            <i data-lucide="pause" class="w-3.5 h-3.5"></i>
+            Suspend
+          </button>
+          <button 
+            class="btn-action btn-ghost"
+            hx-post="/control/step" 
+            hx-target="#status" 
+            hx-swap="outerHTML"
+          >
+            <i data-lucide="play-circle" class="w-3.5 h-3.5"></i>
+            Step
+          </button>
         </div>
+      </div>
+
+      <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/control/goal" hx-target="#status" hx-swap="outerHTML">
+        <label class="label-void">Primary Objective</label>
+        <textarea 
+          name="goal" 
+          class="input-void min-h-[80px] resize-none"
+          placeholder="Define objective..."
+        >{{ state.current_goal }}</textarea>
+        <button type="submit" class="btn-action btn-ghost w-full">Update Goal</button>
       </form>
     </div>
 
-    <!-- System Metrics (Visual purely for aesthetics) -->
-    <div class="glass-panel p-6 flex flex-col gap-4">
-      <h3 class="label-caps">Neural Metrics</h3>
+    <!-- Agent Settings -->
+    <div id="settings-panel" hx-get="/partials/settings" hx-trigger="load, every 10s" hx-swap="outerHTML">
+      {% include "partials/settings.html" %}
+    </div>
+
+    <!-- Telemetry -->
+    <div class="panel p-5 flex flex-col gap-4 animate-fade-in" style="animation-delay: 200ms">
+      <h3 class="label-void">Telemetry</h3>
       <div class="space-y-3">
-        <div class="space-y-1">
+        <div class="space-y-1.5">
           <div class="flex justify-between text-[10px] font-mono">
-            <span>Cognitive Load</span>
-            <span class="text-neon">42%</span>
+            <span class="text-void-600">Cognitive Load</span>
+            <span class="text-emerald-pulse">32%</span>
           </div>
-          <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-            <div class="h-full bg-neon w-[42%] shadow-neon-sm"></div>
+          <div class="h-0.5 w-full bg-void-800 rounded-full overflow-hidden">
+            <div class="h-full bg-emerald-pulse w-[32%] opacity-50 shadow-emerald-glow"></div>
           </div>
         </div>
-        <div class="space-y-1">
+        <div class="space-y-1.5">
           <div class="flex justify-between text-[10px] font-mono">
-            <span>Memory Latency</span>
-            <span class="text-cyber-blue">12ms</span>
+            <span class="text-void-600">Sync Latency</span>
+            <span class="text-stardust">8ms</span>
           </div>
-          <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden">
-            <div class="h-full bg-cyber-blue w-[12%]"></div>
+          <div class="h-0.5 w-full bg-void-800 rounded-full overflow-hidden">
+            <div class="h-full bg-stardust w-[8%] opacity-20"></div>
           </div>
         </div>
       </div>
     </div>
-  </div>
+  </aside>
 
-  <!-- Right Column: Logs & Memory -->
-  <div class="lg:col-span-8 flex flex-col gap-8">
+  <!-- Center Column: The Stream (Logs) -->
+  <section class="lg:col-span-6 flex flex-col gap-4 h-full animate-fade-in" style="animation-delay: 150ms">
+    <div class="panel flex flex-col h-full overflow-hidden border-emerald-pulse/5 bg-void-900/80">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
+        <div class="flex items-center gap-2">
+           <i data-lucide="activity" class="w-4 h-4 text-emerald-pulse opacity-50"></i>
+           <h3 class="text-xs font-display uppercase tracking-[0.2em] text-stardust">Neural Stream</h3>
+        </div>
+        <div class="flex items-center gap-3">
+           <span class="text-[9px] font-mono text-void-700 uppercase tracking-widest">Live Link</span>
+           <div class="h-1 w-1 rounded-full bg-emerald-pulse animate-pulse"></div>
+        </div>
+      </div>
+      
+      {% include "partials/logs.html" %}
+    </div>
+  </section>
+
+  <!-- Right Column: Directives & Vault -->
+  <aside class="lg:col-span-3 flex flex-col gap-6 overflow-y-auto pr-2 scrollbar-hide">
     
-    <!-- Model Progress & Logs -->
-    {% include "partials/logs.html" %}
+    <!-- Action Queue -->
+    <div id="queue-panel" hx-get="/partials/queue" hx-trigger="load, every 3s" hx-swap="outerHTML">
+      {% include "partials/queue.html" %}
+    </div>
 
-    {% include "partials/queue.html" %}
+    <!-- Provider Wizard -->
+    <div id="providers-panel" hx-get="/partials/providers" hx-trigger="load, every 10s" hx-swap="outerHTML">
+      {% include "partials/providers.html" %}
+    </div>
 
     <!-- Memory Vault -->
-    <div class="glass-panel p-6 flex flex-col gap-6">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3">
-           <i data-lucide="archive" class="w-5 h-5 text-neon"></i>
-           <h3 class="text-lg text-slate-50">Memory Vault</h3>
+    <div class="panel flex flex-col animate-fade-in" style="animation-delay: 300ms">
+      <div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
+        <div class="flex items-center gap-2">
+           <i data-lucide="database" class="w-3.5 h-3.5 text-void-700"></i>
+           <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Vault</h3>
         </div>
         <select
           name="path"
-          class="bg-transparent border-none text-xs font-mono text-slate-500 focus:ring-0 cursor-pointer hover:text-neon transition-colors"
+          class="bg-transparent border-none text-[10px] font-mono text-void-600 focus:ring-0 cursor-pointer hover:text-mist transition-colors"
           hx-get="/partials/memory"
           hx-target="#memory-panel"
           hx-swap="outerHTML"
         >
           {% for path in memory_files %}
-            <option value="{{ path }}" {% if path == selected_path %}selected{% endif %}>
+            <option value="{{ path }}" {% if path == selected_path %}selected{% endif %} class="bg-void-800">
               {{ path }}
             </option>
           {% endfor %}
         </select>
       </div>
 
-      <div id="memory-panel" class="min-h-[200px] border-t border-white/5 pt-4">
+      <div id="memory-panel" class="p-5 max-h-[300px] overflow-y-auto scrollbar-hide">
         {% include "partials/memory.html" %}
       </div>
     </div>
-  </div>
+  </aside>
+
 </div>
 {% endblock %}

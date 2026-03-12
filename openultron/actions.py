@@ -14,6 +14,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from .config import MEMORY_ROOT, ROOT, settings
+from .runtime import load_runtime_settings
 from .utils import safe_join, utc_now_iso
 
 QUEUE_FILE = MEMORY_ROOT / "actions_queue.md"
@@ -234,12 +235,18 @@ async def _execute_shell(payload: Dict[str, Any]) -> str:
     cmd = payload.get("cmd")
     if not cmd:
         raise ValueError("Missing cmd for shell action.")
+    runtime = load_runtime_settings()
+    shell_mode = runtime.get("shell_mode", settings.shell_mode)
+    shell_timeout = int(runtime.get("shell_timeout_seconds", settings.shell_timeout_seconds))
+    allowlist_raw = runtime.get("shell_allowlist", ",".join(settings.shell_allowlist))
+    allowlist = [item.strip() for item in str(allowlist_raw).split(",") if item.strip()]
+
     use_shell = bool(payload.get("use_shell", False))
     cwd = _resolve_cwd(payload.get("cwd"))
-    timeout = int(payload.get("timeout", settings.shell_timeout_seconds))
+    timeout = int(payload.get("timeout", shell_timeout))
 
     if use_shell:
-        if settings.shell_mode != "full":
+        if shell_mode != "full":
             raise ValueError("Shell execution requires OPENULTRON_SHELL_MODE=full.")
         if not isinstance(cmd, str):
             raise ValueError("Shell execution requires cmd as a string.")
@@ -261,8 +268,7 @@ async def _execute_shell(payload: Dict[str, Any]) -> str:
         return output.strip() or "(no output)"
 
     parts = _normalize_command(cmd)
-    if settings.shell_mode != "full":
-        allowlist = settings.shell_allowlist
+    if shell_mode != "full":
         if not parts or parts[0] not in allowlist:
             raise ValueError(f"Command '{parts[0] if parts else ''}' not allowed.")
 

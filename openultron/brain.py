@@ -7,31 +7,47 @@ from typing import Dict, Any, List
 from openai import AsyncOpenAI
 
 from .config import settings
+from .providers import get_active_provider
+from .runtime import load_runtime_settings
 
 
 class OpenAIClient:
-    def __init__(self) -> None:
+    def __init__(self, provider: Dict[str, Any]) -> None:
+        self.provider = provider
         self.client: AsyncOpenAI | None = None
-        if settings.api_key:
-            client_args: Dict[str, Any] = {"api_key": settings.api_key}
-            if settings.base_url:
-                client_args["base_url"] = settings.base_url
-            if settings.organization:
-                client_args["organization"] = settings.organization
-            if settings.project:
-                client_args["project"] = settings.project
+        api_key = provider.get("api_key", "")
+        if api_key:
+            client_args: Dict[str, Any] = {"api_key": api_key}
+            base_url = provider.get("base_url")
+            if base_url:
+                client_args["base_url"] = base_url
+            organization = provider.get("organization")
+            if organization:
+                client_args["organization"] = organization
+            project = provider.get("project")
+            if project:
+                client_args["project"] = project
             self.client = AsyncOpenAI(**client_args)
 
-    async def chat(self, model: str, messages: List[Dict[str, str]]) -> str:
+    async def chat(self, messages: List[Dict[str, str]]) -> str:
         if not self.client:
-            raise RuntimeError("Missing OPENAI_API_KEY.")
-        response = await self.client.chat.responses.create(
-            model=model,
-            input=messages,
-            temperature=0.4,
-            max_output_tokens=800,
-            response_format={"type": "json_object"},
-        )
+            raise RuntimeError("Missing provider API key.")
+        model = self.provider.get("model") or settings.model
+        try:
+            response = await self.client.chat.responses.create(
+                model=model,
+                input=messages,
+                temperature=0.4,
+                max_output_tokens=800,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            response = await self.client.chat.responses.create(
+                model=model,
+                input=messages,
+                temperature=0.4,
+                max_output_tokens=800,
+            )
         text = _extract_text(response)
         if not text:
             raise RuntimeError("Empty response from model.")
@@ -54,7 +70,6 @@ def _extract_text(response: Any) -> str:
 
 class Brain:
     def __init__(self) -> None:
-        self.client = OpenAIClient()
         self.model = settings.model
 
     async def generate_loop_report(self, state: Dict[str, str], context: str) -> Dict[str, Any]:
@@ -82,7 +97,9 @@ class Brain:
         ]
 
         try:
-            content = await self.client.chat(self.model, messages)
+            provider = get_active_provider()
+            client = OpenAIClient(provider)
+            content = await client.chat(messages)
             parsed = _parse_json_block(content)
             return _coerce_report(parsed)
         except Exception as exc:
@@ -137,7 +154,9 @@ def _coerce_report(data: Dict[str, Any]) -> Dict[str, Any]:
     actions = data.get("actions", [])
     if not isinstance(actions, list):
         actions = []
-    report["actions"] = actions[: settings.max_actions_per_loop]
+    runtime = load_runtime_settings()
+    max_actions = int(runtime.get("max_actions_per_loop", settings.max_actions_per_loop))
+    report["actions"] = actions[:max_actions]
     return report
 
 
@@ -147,8 +166,8 @@ def _fallback_report(error: str, state: Dict[str, str]) -> Dict[str, Any]:
         "think": f"Operating in offline mode. Error: {error}",
         "act": "Write a minimal loop entry and wait for API access.",
         "evaluate": "Offline output is limited but consistent.",
-        "reflect": "Ensure OPENAI_API_KEY is configured.",
-        "improve": "Configure the API key to enable learning loops.",
+        "reflect": "Ensure a provider API key is configured.",
+        "improve": "Configure the provider to enable learning loops.",
         "next_focus": state.get("current_goal", "Define a goal."),
         "summary": "Offline loop entry recorded.",
         "unknowns": ["Model response unavailable."],

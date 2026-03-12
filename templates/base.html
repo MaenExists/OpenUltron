@@ -3,11 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenUltron // Autonomous Intelligence</title>
+    <title>OpenUltron // Monolithic Void</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Sora:wght@400;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Sora:wght@400;600;700&display=swap"
       rel="stylesheet"
     />
     <script src="https://cdn.tailwindcss.com"></script>
@@ -17,46 +17,42 @@
         theme: {
           extend: {
             colors: {
-              obsidian: {
-                950: "#05070a",
-                900: "#0b0f17",
-                850: "#101623",
-                800: "#141b2d",
-                700: "#1c253c",
-                600: "#2a3554",
+              void: {
+                DEFAULT: "#000000",
+                950: "#000000",
+                900: "#050505",
+                850: "#0a0a0a",
+                800: "#111111",
+                700: "#1a1a1a",
+                600: "#262626",
               },
-              neon: {
-                DEFAULT: "#2ee38f",
-                50: "#f0fdf4",
-                300: "#78ffd1",
-                400: "#4ef9a4",
-                500: "#2ee38f",
-                600: "#1fb07a",
+              emerald: {
+                pulse: "#10b981",
               },
-              cyber: {
-                pink: "#ff2e89",
-                blue: "#00d1ff",
-                yellow: "#ffd300",
-              }
+              stardust: "#f9fafb",
+              mist: "#9ca3af",
             },
             fontFamily: {
               display: ["Sora", "sans-serif"],
-              body: ["IBM Plex Sans", "sans-serif"],
+              body: ["Plus Jakarta Sans", "sans-serif"],
               mono: ["JetBrains Mono", "monospace"],
             },
             boxShadow: {
-              'neon-sm': "0 0 10px rgba(46, 227, 143, 0.2)",
-              'neon-md': "0 0 20px rgba(46, 227, 143, 0.3)",
-              'neon-lg': "0 0 35px rgba(46, 227, 143, 0.15)",
+              'emerald-glow': "0 0 15px rgba(16, 185, 129, 0.2)",
+              'subtle-border': "inset 0 0 0 1px rgba(255, 255, 255, 0.05)",
             },
             animation: {
-              'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-              'glow': 'glow 2s ease-in-out infinite alternate',
+              'pulse-emerald': 'pulse-emerald 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'fade-in': 'fade-in 0.5s ease-out',
             },
             keyframes: {
-              glow: {
-                '0%': { boxShadow: '0 0 5px rgba(46, 227, 143, 0.2)' },
-                '100%': { boxShadow: '0 0 20px rgba(46, 227, 143, 0.6)' },
+              'pulse-emerald': {
+                '0%, 100%': { opacity: 0.4, transform: 'scale(1)' },
+                '50%': { opacity: 1, transform: 'scale(1.05)' },
+              },
+              'fade-in': {
+                '0%': { opacity: 0, transform: 'translateY(4px)' },
+                '100%': { opacity: 1, transform: 'translateY(0)' },
               }
             }
           },
@@ -66,103 +62,115 @@
     <style type="text/tailwindcss">
       @layer base {
         body {
-          @apply bg-obsidian-950 text-slate-300 font-body antialiased selection:bg-neon/30 selection:text-neon-300;
+          @apply bg-void text-mist font-body antialiased selection:bg-emerald-pulse/30 selection:text-stardust;
         }
         h1, h2, h3, h4 {
-          @apply font-display font-semibold text-slate-50 tracking-tight;
+          @apply font-display font-semibold text-stardust tracking-tight;
+        }
+        ::-webkit-scrollbar {
+          width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+          @apply bg-void;
+        }
+        ::-webkit-scrollbar-thumb {
+          @apply bg-void-700 rounded-full hover:bg-void-600 transition-colors;
         }
       }
 
       @layer components {
-        .glass-panel {
-          @apply rounded-2xl border border-white/5 bg-obsidian-900/40 backdrop-blur-md shadow-neon-lg transition-all duration-300;
+        .panel {
+          @apply rounded-xl border border-white/[0.03] bg-void-900 shadow-subtle-border transition-all duration-300;
         }
-        .glass-panel:hover {
-          @apply border-white/10 bg-obsidian-900/60;
+        .panel-hover {
+          @apply hover:border-white/[0.08] hover:bg-void-850;
         }
-        .neon-border {
-          @apply border border-neon/30 shadow-neon-sm;
+        .btn-action {
+          @apply flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-xs font-medium transition-all duration-200 disabled:opacity-30;
         }
-        .label-caps {
-          @apply text-[10px] uppercase tracking-[0.3em] font-bold text-slate-500;
+        .btn-emerald {
+          @apply bg-emerald-pulse/10 text-emerald-pulse border border-emerald-pulse/20 hover:bg-emerald-pulse/20 hover:border-emerald-pulse/30;
         }
-        .nav-link {
-          @apply text-sm text-slate-400 hover:text-neon transition-colors duration-200 cursor-pointer flex items-center gap-2;
+        .btn-ghost {
+          @apply bg-white/[0.02] text-mist border border-white/[0.05] hover:bg-white/[0.05] hover:text-stardust;
         }
-        .btn-primary {
-          @apply relative overflow-hidden rounded-lg bg-neon px-6 py-2.5 text-sm font-bold text-obsidian-950 transition-all hover:bg-neon-400 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+        .input-void {
+          @apply w-full rounded-lg border border-white/[0.05] bg-void-800 px-3 py-2 text-xs text-stardust placeholder:text-void-600 focus:border-emerald-pulse/40 focus:outline-none focus:ring-1 focus:ring-emerald-pulse/20 transition-all;
         }
-        .btn-secondary {
-          @apply rounded-lg border border-white/10 bg-white/5 px-6 py-2.5 text-sm font-semibold text-slate-200 transition-all hover:bg-white/10 hover:border-white/20 active:scale-[0.98];
+        .label-void {
+          @apply text-[10px] uppercase tracking-[0.2em] font-bold text-void-600;
         }
-        .input-cyber {
-          @apply w-full rounded-lg border border-white/10 bg-obsidian-800/50 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-neon/50 focus:outline-none focus:ring-1 focus:ring-neon/50 transition-all;
-        }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-        
-        .status-dot {
-          @apply h-2 w-2 rounded-full;
-        }
-        .status-dot-running { @apply bg-neon animate-pulse shadow-[0_0_8px_rgba(46,227,143,0.8)]; }
-        .status-dot-paused { @apply bg-slate-600; }
-        .status-dot-error { @apply bg-cyber-pink animate-pulse shadow-[0_0_8px_rgba(255,46,137,0.8)]; }
       }
 
-      .noise-bg {
-        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-        opacity: 0.015;
+      .grain-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        opacity: 0.02;
+      }
+
+      .radial-pulse {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: radial-gradient(circle at 50% 50%, rgba(16, 185, 129, 0.03) 0%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      /* HTMX Indicator */
+      .htmx-indicator {
+        opacity: 0;
+        transition: opacity 200ms ease-in;
+      }
+      .htmx-requesting .htmx-indicator {
+        opacity: 1;
+      }
+      .htmx-requesting {
+        cursor: wait;
       }
     </style>
   </head>
-  <body class="relative min-h-screen overflow-x-hidden">
-    <!-- Ambient Background -->
-    <div class="fixed inset-0 pointer-events-none z-0">
-      <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-neon/5 blur-[120px]"></div>
-      <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-cyber-blue/5 blur-[120px]"></div>
-      <div class="absolute inset-0 noise-bg"></div>
-    </div>
+  <body class="relative min-h-screen overflow-x-hidden flex flex-col">
+    <div class="grain-overlay"></div>
+    <div class="radial-pulse"></div>
 
-    <div class="relative z-10 flex flex-col min-h-screen">
-      <!-- Navbar -->
-      <nav class="flex items-center justify-between px-8 py-6 border-b border-white/5 bg-obsidian-950/50 backdrop-blur-xl sticky top-0 z-50">
-        <div class="flex items-center gap-3">
-          <div class="h-10 w-10 flex items-center justify-center rounded-xl bg-neon/10 border border-neon/20 shadow-neon-sm">
-             <i data-lucide="zap" class="w-5 h-5 text-neon"></i>
-          </div>
-          <div>
-            <span class="font-display font-bold text-slate-50 tracking-tighter text-xl">OPENULTRON</span>
-            <span class="block text-[9px] uppercase tracking-[0.4em] text-slate-500 font-bold -mt-1">Autonomous Agent OS</span>
-          </div>
+    <header class="relative z-40 flex items-center justify-between px-6 py-4 border-b border-white/[0.03] bg-void/50 backdrop-blur-md sticky top-0">
+      <div class="flex items-center gap-4">
+        <div class="h-8 w-8 flex items-center justify-center rounded-lg bg-emerald-pulse/5 border border-emerald-pulse/20">
+          <i data-lucide="shield" class="w-4 h-4 text-emerald-pulse"></i>
         </div>
-        
-        <div class="hidden md:flex items-center gap-8">
-          <a class="nav-link"><i data-lucide="layout-grid" class="w-4 h-4"></i> Dashboard</a>
-          <a class="nav-link"><i data-lucide="database" class="w-4 h-4"></i> Memory</a>
-          <a class="nav-link"><i data-lucide="settings" class="w-4 h-4"></i> Settings</a>
+        <div class="flex flex-col">
+          <span class="font-display font-bold text-stardust tracking-tight text-lg leading-none">OPENULTRON</span>
+          <span class="text-[8px] uppercase tracking-[0.3em] text-void-600 font-bold mt-1">Autonomous intelligence v1.4</span>
         </div>
+      </div>
+      
+      <div class="flex items-center gap-6">
+        <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-pulse/5 border border-emerald-pulse/10">
+          <span class="h-1.5 w-1.5 rounded-full bg-emerald-pulse shadow-emerald-glow animate-pulse-emerald"></span>
+          <span class="text-[9px] font-bold uppercase tracking-widest text-emerald-pulse">Neural Link Active</span>
+        </div>
+      </div>
+    </header>
 
-        <div class="flex items-center gap-4">
-           <div id="connection-status" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-             <span class="h-1.5 w-1.5 rounded-full bg-neon shadow-[0_0_5px_rgba(46,227,143,0.8)]"></span>
-             System Online
-           </div>
-        </div>
-      </nav>
+    <main class="relative z-10 flex-grow container mx-auto px-6 py-6 max-w-7xl">
+      {% block content %}{% endblock %}
+    </main>
 
-      <main class="flex-grow container mx-auto px-6 py-8">
-        {% block content %}{% endblock %}
-      </main>
-
-      <!-- Footer -->
-      <footer class="px-8 py-6 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-4">
-        <p class="text-xs text-slate-500 font-mono">© 2026 OPENULTRON. v1.4.0-NEON</p>
-        <div class="flex items-center gap-6">
-          <a class="text-xs text-slate-500 hover:text-neon transition-colors">Documentation</a>
-          <a class="text-xs text-slate-500 hover:text-neon transition-colors">GitHub</a>
-        </div>
-      </footer>
-    </div>
+    <footer class="relative z-10 px-8 py-6 border-t border-white/[0.03] flex items-center justify-between">
+      <div class="flex items-center gap-4">
+        <p class="text-[9px] text-void-600 font-mono tracking-widest uppercase">Monolithic Core // Pulse-Enabled</p>
+      </div>
+      <div class="flex items-center gap-4 text-void-700">
+         <i data-lucide="github" class="w-4 h-4 hover:text-mist cursor-pointer transition-colors"></i>
+         <i data-lucide="terminal" class="w-4 h-4 hover:text-mist cursor-pointer transition-colors"></i>
+      </div>
+    </footer>
 
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
     <script src="https://unpkg.com/htmx.org@1.9.12/dist/ext/sse.js"></script>
@@ -171,13 +179,16 @@
       const LOGS_ENTRIES_ID = "logs-entries";
 
       function isNearBottom(container) {
-        return container.scrollHeight - container.scrollTop - container.clientHeight < 40;
+        return container.scrollHeight - container.scrollTop - container.clientHeight < 60;
       }
 
       function scrollLogsToBottom() {
         const container = document.getElementById(LOGS_SCROLL_ID);
         if (container) {
-          container.scrollTop = container.scrollHeight;
+          container.scrollTo({
+            top: container.scrollHeight,
+            behavior: 'smooth'
+          });
         }
       }
 

@@ -5,6 +5,7 @@ import hashlib
 
 from .brain import Brain
 from .config import settings
+from .runtime import load_runtime_settings
 from .memory import (
     append_experience,
     latest_experience_excerpt,
@@ -32,16 +33,24 @@ class Agent:
             state = read_state()
             if state.get("status") == "running":
                 await self.loop_once()
-                await asyncio.sleep(settings.loop_interval_seconds)
+                runtime = load_runtime_settings()
+                interval = int(runtime.get("loop_interval_seconds", settings.loop_interval_seconds))
+                await asyncio.sleep(interval)
             else:
                 await asyncio.sleep(1.0)
 
     async def loop_once(self) -> None:
         async with self._lock:
             state = read_state()
-            if settings.max_loops > 0:
+            runtime = load_runtime_settings()
+            max_loops = int(runtime.get("max_loops", settings.max_loops))
+            max_actions = int(runtime.get("max_actions_per_loop", settings.max_actions_per_loop))
+            max_stalls = int(runtime.get("max_stalls", settings.max_stalls))
+            auto_execute = bool(runtime.get("auto_execute_actions", settings.auto_execute_actions))
+
+            if max_loops > 0:
                 current_count = int(state.get("loop_count", "0"))
-                if current_count >= settings.max_loops:
+                if current_count >= max_loops:
                     update_state(
                         status="paused",
                         brain_status="idle",
@@ -72,11 +81,11 @@ class Agent:
                 queued = queue_actions(actions, source="loop")
 
                 goal_complete = bool(report.get("goal_complete", False))
-                stall_count, stalled = _update_stall_state(report, state)
+                stall_count, stalled = _update_stall_state(report, state, max_stalls)
 
-                if settings.auto_execute_actions and queued and not goal_complete and not stalled:
+                if auto_execute and queued and not goal_complete and not stalled:
                     approve_all([action.id for action in queued])
-                    await run_all_approved(limit=settings.max_actions_per_loop)
+                    await run_all_approved(limit=max_actions)
 
                 loop_count = int(state.get("loop_count", "0")) + 1
                 status = "paused" if goal_complete or stalled else state.get("status", "running")
@@ -146,7 +155,11 @@ def _fingerprint(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
-def _update_stall_state(report: dict[str, object], state: dict[str, str]) -> tuple[int, bool]:
+def _update_stall_state(
+    report: dict[str, object],
+    state: dict[str, str],
+    max_stalls: int,
+) -> tuple[int, bool]:
     previous_fp = state.get("last_summary_fingerprint", "")
     current_fp = _fingerprint(str(report.get("summary", "")))
     no_actions = not report.get("actions")
@@ -154,7 +167,7 @@ def _update_stall_state(report: dict[str, object], state: dict[str, str]) -> tup
     stalled = False
     if current_fp and current_fp == previous_fp and no_actions:
         stall_count += 1
-        stalled = stall_count >= settings.max_stalls
+        stalled = stall_count >= max_stalls
     else:
         stall_count = 0
     return stall_count, stalled

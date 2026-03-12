@@ -1,0 +1,60 @@
+<div
+  id="providers-panel"
+  class="panel flex flex-col animate-fade-in"
+  hx-get="/partials/providers"
+  hx-trigger="every 10s"
+  hx-swap="outerHTML"
+>
+  <div class="flex items-center justify-between px-5 py-4 border-b border-white/[0.03]">
+    <div class="flex items-center gap-2">
+      <i data-lucide="switch-camera" class="w-3.5 h-3.5 text-void-700"></i>
+      <h3 class="text-[10px] font-display uppercase tracking-[0.2em] text-stardust">Provider Wizard</h3>
+    </div>
+    <span class="text-[9px] font-mono font-bold text-void-700 uppercase tracking-widest">
+      {{ active_provider.label or active_provider.id }}
+    </span>
+  </div>
+
+  <div class="p-5 flex flex-col gap-5">
+    <div class="space-y-2">
+      <p class="label-void">Active Provider</p>
+      <div class="rounded-lg border border-white/[0.03] bg-void-850 p-3 text-[10px] font-mono text-mist">
+        <p><span class="text-void-600">ID:</span> {{ active_provider.id }}</p>
+        <p><span class="text-void-600">Model:</span> {{ active_provider.model }}</p>
+        <p><span class="text-void-600">Base URL:</span> {{ active_provider.base_url }}</p>
+      </div>
+    </div>
+
+    <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/providers/select" hx-target="#providers-panel" hx-swap="outerHTML">
+      <label class="label-void">Switch Provider</label>
+      <div class="flex gap-2">
+        <select name="provider_id" class="input-void flex-grow">
+          {% for provider in providers %}
+            <option value="{{ provider.id }}" {% if provider.id == active_provider.id %}selected{% endif %}>
+              {{ provider.label or provider.id }}
+            </option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn-action btn-ghost px-3">Activate</button>
+      </div>
+    </form>
+
+    <form class="space-y-3 pt-4 border-t border-white/[0.03]" hx-post="/providers/save" hx-target="#providers-panel" hx-swap="outerHTML">
+      <label class="label-void">Add / Update Provider</label>
+      <input type="text" name="label" class="input-void" placeholder="Label (e.g., OpenAI, Custom)" />
+      <input type="text" name="provider_id" class="input-void" placeholder="ID (optional, auto-generated)" />
+      <input type="text" name="base_url" class="input-void" placeholder="Base URL" />
+      <input type="text" name="model" class="input-void" placeholder="Model" />
+      <input type="password" name="api_key" class="input-void" placeholder="API Key" />
+      <input type="text" name="organization" class="input-void" placeholder="Organization (optional)" />
+      <input type="text" name="project" class="input-void" placeholder="Project (optional)" />
+      <div class="flex items-center justify-between">
+        <label class="text-[9px] font-mono text-void-600 uppercase tracking-widest">
+          <input type="checkbox" name="set_active" checked class="mr-2" />
+          Set Active
+        </label>
+        <button type="submit" class="btn-action btn-ghost">Save Provider</button>
+      </div>
+    </form>
+  </div>
+</div>
