@@ -1,0 +1,10 @@
+{% if logs %}
+  {% for entry in logs %}
+    {% include "partials/log_entry.html" %}
+  {% endfor %}
+{% else %}
+  <div class="flex flex-col items-center justify-center h-full gap-4 text-slate-600">
+    <i data-lucide="ghost" class="w-12 h-12 opacity-20"></i>
+    <p class="text-xs font-mono uppercase tracking-widest italic">Awaiting first neural resonance...</p>
+  </div>
+{% endif %}

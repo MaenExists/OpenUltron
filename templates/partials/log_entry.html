@@ -1,0 +1,14 @@
+<div class="group relative space-y-3 transition-all">
+  <div class="flex items-center justify-between gap-4">
+    <div class="flex items-center gap-2">
+      <div class="h-[1px] w-4 bg-neon/30 group-hover:w-8 transition-all"></div>
+      <span class="text-[10px] font-mono text-neon/50 uppercase tracking-widest">{{ entry.timestamp }}</span>
+    </div>
+  </div>
+  
+  <div class="pl-6 border-l border-white/5 group-hover:border-neon/30 transition-all">
+    <p class="text-sm text-slate-300 leading-relaxed font-mono whitespace-pre-wrap">
+      {{ entry.body }}
+    </p>
+  </div>
+</div>

@@ -1,0 +1,82 @@
+<div
+  id="status"
+  class="glass-panel p-6 flex flex-col gap-6"
+  hx-get="/partials/status"
+  hx-trigger="load, every 2s"
+  hx-swap="outerHTML"
+>
+  {% set is_running = state.status == "running" %}
+  {% set brain_status = state.brain_status or "idle" %}
+  
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+       <div class="status-dot {% if state.last_error %}status-dot-error{% elif is_running %}status-dot-running{% else %}status-dot-paused{% endif %}"></div>
+       <h3 class="text-lg">Core Loop</h3>
+    </div>
+    <span class="px-2 py-0.5 rounded border border-white/10 bg-white/5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+      {{ state.status }}
+    </span>
+  </div>
+
+  <!-- Detailed Brain Status / Progress -->
+  <div class="space-y-4">
+    <div class="flex items-center justify-between">
+       <span class="label-caps">Neural State</span>
+       <span class="text-[10px] font-mono text-neon uppercase tracking-widest">{{ brain_status }}</span>
+    </div>
+    
+    <div class="grid grid-cols-6 gap-1">
+      <div class="h-1.5 rounded-l-full {% if brain_status in ['observing', 'thinking', 'acting', 'evaluating', 'reflecting', 'improving'] %}bg-neon shadow-neon-sm{% else %}bg-white/5{% endif %} transition-all duration-500"></div>
+      <div class="h-1.5 {% if brain_status in ['thinking', 'acting', 'evaluating', 'reflecting', 'improving'] %}bg-neon shadow-neon-sm{% else %}bg-white/5{% endif %} transition-all duration-500"></div>
+      <div class="h-1.5 {% if brain_status in ['acting', 'evaluating', 'reflecting', 'improving'] %}bg-neon shadow-neon-sm{% else %}bg-white/5{% endif %} transition-all duration-500"></div>
+      <div class="h-1.5 {% if brain_status in ['evaluating', 'reflecting', 'improving'] %}bg-neon shadow-neon-sm{% else %}bg-white/5{% endif %} transition-all duration-500"></div>
+      <div class="h-1.5 {% if brain_status in ['reflecting', 'improving'] %}bg-neon shadow-neon-sm{% else %}bg-white/5{% endif %} transition-all duration-500"></div>
+      <div class="h-1.5 rounded-r-full {% if brain_status == 'improving' %}bg-neon shadow-neon-sm{% else %}bg-white/5{% endif %} transition-all duration-500"></div>
+    </div>
+    
+    <div class="flex justify-between text-[8px] font-mono text-slate-500 uppercase tracking-tighter">
+      <span>Obs</span>
+      <span>Thk</span>
+      <span>Act</span>
+      <span>Evl</span>
+      <span>Rfl</span>
+      <span>Imp</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 gap-4 border-t border-white/5 pt-4">
+    <div class="space-y-1">
+      <p class="label-caps">Loop Count</p>
+      <p class="text-xl font-display font-bold text-slate-50">{{ state.loop_count }}</p>
+    </div>
+    <div class="space-y-1">
+      <p class="label-caps">Last Cycle</p>
+      <p class="text-xs font-mono text-slate-400 truncate">{{ state.last_cycle }}</p>
+    </div>
+  </div>
+
+  <div class="space-y-3 bg-white/5 rounded-xl p-4 border border-white/5">
+    <div class="space-y-1">
+       <p class="label-caps !text-neon/70">Current Action</p>
+       <p class="text-xs text-slate-200 leading-relaxed">{{ state.last_action }}</p>
+    </div>
+  </div>
+
+  {% if state.last_error %}
+    <div class="rounded-xl border border-cyber-pink/20 bg-cyber-pink/10 p-4 space-y-3 animate-pulse">
+      <div class="flex items-center gap-2 text-cyber-pink">
+        <i data-lucide="alert-circle" class="w-4 h-4"></i>
+        <p class="text-[10px] uppercase font-bold tracking-widest">Neural Fault Detected</p>
+      </div>
+      <p class="text-xs text-cyber-pink/80 font-mono">{{ state.last_error }}</p>
+      <button
+        class="w-full py-2 rounded-lg bg-cyber-pink/20 border border-cyber-pink/30 text-[10px] font-bold uppercase text-cyber-pink hover:bg-cyber-pink/30 transition-all"
+        hx-post="/control/reset-error"
+        hx-target="#status"
+        hx-swap="outerHTML"
+      >
+        Acknowledge & Clear
+      </button>
+    </div>
+  {% endif %}
+</div>

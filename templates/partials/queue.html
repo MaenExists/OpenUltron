@@ -1,0 +1,96 @@
+<div
+  id="queue-panel"
+  class="glass-panel p-6 flex flex-col gap-5"
+  hx-get="/partials/queue"
+  hx-trigger="load, every 2s"
+  hx-swap="outerHTML"
+>
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <i data-lucide="clipboard-list" class="w-5 h-5 text-neon"></i>
+      <h3 class="text-lg text-slate-50">Action Queue</h3>
+    </div>
+    <span class="label-caps">{{ queue | length }} queued</span>
+  </div>
+
+  <div class="flex flex-wrap gap-3">
+    <button class="btn-secondary" hx-post="/actions/run-next" hx-target="#queue-panel" hx-swap="outerHTML">
+      Run Next Approved
+    </button>
+  </div>
+
+  <form class="space-y-3 border-t border-white/5 pt-4" hx-post="/actions/add" hx-target="#queue-panel" hx-swap="outerHTML">
+    <label class="label-caps">Manual Action</label>
+    <input type="text" name="title" class="input-cyber" placeholder="Action title" />
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <select name="action_type" class="input-cyber">
+        <option value="shell">shell</option>
+        <option value="write_file">write_file</option>
+        <option value="append_file">append_file</option>
+        <option value="write_memory">write_memory</option>
+        <option value="append_memory">append_memory</option>
+        <option value="search_web">search_web</option>
+        <option value="fetch_url">fetch_url</option>
+      </select>
+      <input type="text" name="payload" class="input-cyber font-mono text-xs" value="{}" />
+    </div>
+    <button type="submit" class="btn-secondary w-full">Queue Action</button>
+  </form>
+
+  <div class="space-y-4 max-h-[380px] overflow-y-auto scrollbar-hide pr-2">
+    {% if queue %}
+      {% for action in queue|reverse %}
+        <div class="rounded-xl border border-white/5 bg-obsidian-950/40 p-4 space-y-3">
+          <div class="flex items-start justify-between gap-3">
+            <div class="space-y-1">
+              <p class="text-sm text-slate-100">{{ action.title }}</p>
+              <p class="text-[10px] font-mono uppercase tracking-widest text-slate-500">
+                {{ action.type }} • {{ action.status }}
+              </p>
+            </div>
+            {% if action.status == "proposed" %}
+              <div class="flex gap-2">
+                <button
+                  class="btn-secondary px-3 py-1 text-[10px]"
+                  hx-post="/actions/approve"
+                  hx-vals='{"action_id":"{{ action.id }}"}'
+                  hx-target="#queue-panel"
+                  hx-swap="outerHTML"
+                >
+                  Approve
+                </button>
+                <button
+                  class="btn-secondary px-3 py-1 text-[10px]"
+                  hx-post="/actions/reject"
+                  hx-vals='{"action_id":"{{ action.id }}"}'
+                  hx-target="#queue-panel"
+                  hx-swap="outerHTML"
+                >
+                  Reject
+                </button>
+              </div>
+            {% elif action.status == "approved" %}
+              <button
+                class="btn-secondary px-3 py-1 text-[10px]"
+                hx-post="/actions/run-next"
+                hx-target="#queue-panel"
+                hx-swap="outerHTML"
+              >
+                Run
+              </button>
+            {% endif %}
+          </div>
+
+          {% if action.result %}
+            <div class="text-xs text-slate-400 font-mono whitespace-pre-wrap">{{ action.result }}</div>
+          {% endif %}
+          {% if action.error %}
+            <div class="text-xs text-cyber-pink font-mono whitespace-pre-wrap">{{ action.error }}</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="text-xs text-slate-500 font-mono italic">No actions queued.</p>
+    {% endif %}
+  </div>
+</div>

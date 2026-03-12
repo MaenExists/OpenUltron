@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+  
+  <!-- Left Column: Core Control & Status -->
+  <div class="lg:col-span-4 flex flex-col gap-8">
+    
+    <!-- Model Status Panel -->
+    {% include "partials/status.html" %}
+
+    <!-- Control Surface -->
+    <div class="glass-panel p-6 flex flex-col gap-6">
+      <div class="flex items-center justify-between">
+        <h3 class="text-lg">Control Surface</h3>
+        <span class="label-caps">Loop #{{ state.loop_count }}</span>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-3">
+        <button 
+          class="btn-primary flex items-center justify-center gap-2"
+          hx-post="/control/start" 
+          hx-target="#status" 
+          hx-swap="outerHTML"
+        >
+          <i data-lucide="play" class="w-4 h-4"></i>
+          Initialize
+        </button>
+        <button 
+          class="btn-secondary flex items-center justify-center gap-2"
+          hx-post="/control/pause" 
+          hx-target="#status" 
+          hx-swap="outerHTML"
+        >
+          <i data-lucide="pause" class="w-4 h-4"></i>
+          Suspend
+        </button>
+      </div>
+      
+      <button 
+        class="btn-secondary w-full flex items-center justify-center gap-2"
+        hx-post="/control/step" 
+        hx-target="#status" 
+        hx-swap="outerHTML"
+      >
+        <i data-lucide="skip-forward" class="w-4 h-4"></i>
+        Execute Single Cycle
+      </button>
+
+      <form class="space-y-4 pt-4 border-t border-white/5" hx-post="/control/goal" hx-target="#status" hx-swap="outerHTML">
+        <label class="label-caps">Objective Directives</label>
+        <div class="flex flex-col gap-3">
+          <textarea 
+            name="goal" 
+            class="input-cyber min-h-[100px] resize-none"
+            placeholder="Define the next prime directive..."
+          >{{ state.current_goal }}</textarea>
+          <button type="submit" class="btn-secondary w-full">Update Directives</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- System Metrics (Visual purely for aesthetics) -->
+    <div class="glass-panel p-6 flex flex-col gap-4">
+      <h3 class="label-caps">Neural Metrics</h3>
+      <div class="space-y-3">
+        <div class="space-y-1">
+          <div class="flex justify-between text-[10px] font-mono">
+            <span>Cognitive Load</span>
+            <span class="text-neon">42%</span>
+          </div>
+          <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+            <div class="h-full bg-neon w-[42%] shadow-neon-sm"></div>
+          </div>
+        </div>
+        <div class="space-y-1">
+          <div class="flex justify-between text-[10px] font-mono">
+            <span>Memory Latency</span>
+            <span class="text-cyber-blue">12ms</span>
+          </div>
+          <div class="h-1 w-full bg-white/5 rounded-full overflow-hidden">
+            <div class="h-full bg-cyber-blue w-[12%]"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Column: Logs & Memory -->
+  <div class="lg:col-span-8 flex flex-col gap-8">
+    
+    <!-- Model Progress & Logs -->
+    {% include "partials/logs.html" %}
+
+    {% include "partials/queue.html" %}
+
+    <!-- Memory Vault -->
+    <div class="glass-panel p-6 flex flex-col gap-6">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+           <i data-lucide="archive" class="w-5 h-5 text-neon"></i>
+           <h3 class="text-lg text-slate-50">Memory Vault</h3>
+        </div>
+        <select
+          name="path"
+          class="bg-transparent border-none text-xs font-mono text-slate-500 focus:ring-0 cursor-pointer hover:text-neon transition-colors"
+          hx-get="/partials/memory"
+          hx-target="#memory-panel"
+          hx-swap="outerHTML"
+        >
+          {% for path in memory_files %}
+            <option value="{{ path }}" {% if path == selected_path %}selected{% endif %}>
+              {{ path }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div id="memory-panel" class="min-h-[200px] border-t border-white/5 pt-4">
+        {% include "partials/memory.html" %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

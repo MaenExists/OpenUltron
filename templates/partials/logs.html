@@ -1,0 +1,29 @@
+<div
+  id="logs"
+  class="glass-panel flex flex-col h-[600px]"
+>
+  <div class="px-6 py-4 border-b border-white/5 flex items-center justify-between shrink-0 bg-white/[0.02]">
+    <div class="flex items-center gap-3">
+       <i data-lucide="terminal" class="w-4 h-4 text-neon"></i>
+       <h3 class="text-sm font-bold uppercase tracking-[0.2em] text-slate-400">Experience Stream</h3>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="h-1 w-1 rounded-full bg-neon animate-pulse"></span>
+      <span class="text-[10px] font-mono text-slate-500 uppercase">Live Feed</span>
+    </div>
+  </div>
+
+  <div
+    id="logs-scroll"
+    class="flex-grow overflow-y-auto p-6 space-y-6 scrollbar-hide"
+  >
+    <div
+      id="logs-entries"
+      hx-ext="sse"
+      hx-sse="connect:/stream/logs"
+      hx-swap="beforeend"
+    >
+      {% include "partials/logs_entries.html" %}
+    </div>
+  </div>
+</div>
