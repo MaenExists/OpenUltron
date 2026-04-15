@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenUltron Dashboard</title>
+    <!-- HTMX for reactive goodness -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js for lightweight local state -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- CSS for streaming effects -->
+    <style>
+        .thinking-cursor::after { content: " |"; animation: blink 0.7s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+        #log-stream { font-family: 'Courier New', Courier, monospace; }
+        .phase-indicator { transition: all 0.5s ease; }
+        .active-phase { border-color: #f59e0b; background-color: #fef3c7; color: #92400e; font-weight: bold; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 font-sans min-h-screen">
+    
+    <!-- Header -->
+    <nav class="bg-black text-white shadow-lg p-4 border-b-4 border-red-600">
+        <div class="container mx-auto flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <span class="text-3xl font-black tracking-tighter">OPENULTRON</span>
+                <span class="bg-red-600 text-[10px] px-1 rounded uppercase font-bold tracking-widest">v0.1 EXPERIMENTAL</span>
+            </div>
+            <div class="space-x-8 text-sm font-medium uppercase tracking-wide">
+                <a href="/" class="hover:text-red-500 transition border-b-2 border-red-600">Home</a>
+                <a href="/memory" class="hover:text-red-500 transition">Memory</a>
+                <a href="/identity" class="hover:text-red-500 transition">Identity</a>
+                <a href="https://github.com/MaenExists/OpenUltron" target="_blank" class="hover:text-red-500 transition">Source</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto mt-8 px-4 flex flex-col md:flex-row gap-8">
+        
+        <!-- Left Column: Agent Controls and Task Panel -->
+        <div class="w-full md:w-2/3 space-y-8">
+            
+            <!-- Agent Control Panel -->
+            <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h2 class="text-xl font-bold mb-4 flex items-center">
+                    <span class="w-3 h-3 bg-green-500 rounded-full mr-2"></span> Agent Control
+                </h2>
+                
+                <form hx-post="/tasks/start" hx-target="#task-status-container" hx-swap="innerHTML" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Task Description</label>
+                        <textarea name="description" rows="3" class="w-full p-3 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none" placeholder="Enter task (e.g., 'Research the Darwin Gödel Machine and write a summary in workspace/research.md')"></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Incentive / Reward</label>
+                        <input type="text" name="incentive" class="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:outline-none" placeholder="e.g., 'If successful, I will give you more CPU resources.'">
+                    </div>
+                    <button type="submit" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg shadow-md transition-all uppercase tracking-widest flex justify-center items-center">
+                        Initialize Task
+                    </button>
+                </form>
+            </section>
+
+            <!-- Task Progression Panel -->
+            <div id="task-status-container">
+                <!-- Content injected here when task starts -->
+                <div class="bg-gray-100 p-12 rounded-xl border border-dashed border-gray-300 text-center text-gray-500 italic">
+                    Waiting for task initialization...
+                </div>
+            </div>
+
+            <!-- Streaming Reasoning Console (Visible during active task) -->
+            <section id="streaming-console" class="hidden bg-gray-900 text-green-400 p-6 rounded-xl shadow-2xl min-h-[400px] border-l-4 border-red-600">
+                <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                    <span class="text-xs font-mono uppercase text-gray-500">Ultron_Reasoning_Stream</span>
+                    <span class="text-xs font-mono text-red-500 animate-pulse">LIVE ACCESSING LLM</span>
+                </div>
+                
+                <!-- Current Phase Indicators -->
+                <div class="flex gap-2 mb-6 text-[10px] uppercase font-bold text-gray-400">
+                    <div id="p1-indicator" class="phase-indicator flex-1 p-2 border border-gray-700 rounded text-center">Phase 1: Understand</div>
+                    <div id="p2-indicator" class="phase-indicator flex-1 p-2 border border-gray-700 rounded text-center">Phase 2: Act</div>
+                    <div id="p3-indicator" class="phase-indicator flex-1 p-2 border border-gray-700 rounded text-center">Phase 3: Verify</div>
+                </div>
+
+                <div id="log-stream" class="text-sm leading-relaxed overflow-y-auto max-h-[500px] space-y-4">
+                    <!-- Stream content here -->
+                </div>
+            </section>
+
+        </div>
+
+        <!-- Right Column: Stats and History -->
+        <div class="w-full md:w-1/3 space-y-8">
+            
+            <!-- Agent Identity Widget -->
+            <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 class="text-lg font-bold mb-4 uppercase tracking-tighter border-b pb-2">Identity Profile</h3>
+                <div class="space-y-4">
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Designation:</span>
+                        <span class="font-bold text-red-600">[[ id_stats.name ]]</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Status:</span>
+                        <span class="text-green-600 text-sm font-bold uppercase">Online / Conscious</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Version:</span>
+                        <span class="font-mono text-sm text-gray-800">[[ id_stats.version ]]</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-500 text-sm">Evolutions:</span>
+                        <span class="font-mono text-sm text-gray-800">[[ id_stats.total_updates ]]</span>
+                    </div>
+                </div>
+                <a href="/identity" class="mt-6 block text-center text-xs font-bold text-blue-600 uppercase hover:underline">Full Identity Log &rarr;</a>
+            </section>
+
+            <!-- Win/Loss Stats -->
+            <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-200" hx-get="/stats" hx-trigger="load, task-finished from:body" hx-swap="innerHTML">
+                <div class="animate-pulse flex space-y-4 flex-col">
+                    <div class="h-4 bg-gray-200 rounded w-1/2"></div>
+                    <div class="h-10 bg-gray-200 rounded"></div>
+                    <div class="h-10 bg-gray-200 rounded"></div>
+                </div>
+            </section>
+
+            <!-- Recent Task History -->
+            <section class="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <h3 class="text-lg font-bold mb-4 uppercase tracking-tighter border-b pb-2">Recent Task History</h3>
+                <div id="history-list" hx-get="/history" hx-trigger="load, task-finished from:body" hx-swap="innerHTML">
+                     <p class="text-sm text-gray-400 italic">Retrieving history...</p>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <!-- SSE Script for Streaming Task Progress -->
+    <script>
+        document.body.addEventListener('htmx:afterOnLoad', function(evt) {
+            const targetId = evt.detail.target.id;
+            if (targetId === 'task-status-container' && evt.detail.xhr.response.includes('tasks/stream')) {
+                // Task started!
+                const streamUrl = evt.detail.xhr.response.match(/hx-get="([^"]+)"/)[1];
+                startSSE(streamUrl);
+            }
+        });
+
+        function startSSE(url) {
+            const consoleDiv = document.getElementById('streaming-console');
+            const streamDiv = document.getElementById('log-stream');
+            const p1 = document.getElementById('p1-indicator');
+            const p2 = document.getElementById('p2-indicator');
+            const p3 = document.getElementById('p3-indicator');
+
+            consoleDiv.classList.remove('hidden');
+            streamDiv.innerHTML = ''; // Clear previous
+            
+            const eventSource = new EventSource(url);
+            
+            let currentContent = '';
+            let assistantBlock = null;
+
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.status === 'thinking') {
+                    // Update Phase Indicators
+                    [p1, p2, p3].forEach(el => el.classList.remove('active-phase'));
+                    if (data.phase.includes('phase_1')) p1.classList.add('active-phase');
+                    if (data.phase.includes('phase_2')) p2.classList.add('active-phase');
+                    if (data.phase.includes('phase_3')) p3.classList.add('active-phase');
+                    
+                    if (!assistantBlock) {
+                        assistantBlock = document.createElement('div');
+                        assistantBlock.className = 'assistant-message';
+                        streamDiv.appendChild(assistantBlock);
+                    }
+                }
+                
+                if (data.status === 'streaming') {
+                    if (!assistantBlock) {
+                        assistantBlock = document.createElement('div');
+                        assistantBlock.className = 'assistant-message';
+                        streamDiv.appendChild(assistantBlock);
+                    }
+                    assistantBlock.innerText += data.content;
+                    streamDiv.scrollTop = streamDiv.scrollHeight;
+                }
+                
+                if (data.status === 'tool_executing') {
+                    const toolBlock = document.createElement('div');
+                    toolBlock.className = 'text-xs text-yellow-500 font-mono mt-2 p-2 border border-yellow-800 bg-black';
+                    toolBlock.innerText = `> CALLING TOOL: ${data.tool}(${JSON.stringify(data.args)})`;
+                    streamDiv.appendChild(toolBlock);
+                    assistantBlock = null; // New block for subsequent reasoning
+                    streamDiv.scrollTop = streamDiv.scrollHeight;
+                }
+                
+                if (data.status === 'tool_result') {
+                    const resultBlock = document.createElement('div');
+                    resultBlock.className = 'text-xs text-blue-400 font-mono mb-2 p-2 border border-blue-900 bg-gray-800 opacity-80';
+                    const content = data.result.success ? JSON.stringify(data.result.content || data.result).substring(0, 500) + '...' : `ERROR: ${data.result.error}`;
+                    resultBlock.innerText = `< RESULT: ${content}`;
+                    streamDiv.appendChild(resultBlock);
+                    streamDiv.scrollTop = streamDiv.scrollHeight;
+                }
+
+                if (data.status === 'dreaming') {
+                    const dreamBlock = document.createElement('div');
+                    dreamBlock.className = 'text-xl font-black text-purple-400 animate-pulse mt-8 mb-4';
+                    dreamBlock.innerText = "DREAMING... Consolidating memories into long-term storage.";
+                    streamDiv.appendChild(dreamBlock);
+                    streamDiv.scrollTop = streamDiv.scrollHeight;
+                }
+
+                if (data.status === 'finished') {
+                    eventSource.close();
+                    document.body.dispatchEvent(new Event('task-finished'));
+                    const finalBlock = document.createElement('div');
+                    finalBlock.className = `p-4 mt-4 rounded-lg font-bold uppercase text-center ${data.state.outcome === 'win' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`;
+                    finalBlock.innerText = `TASK FINISHED: ${data.state.outcome.toUpperCase()}`;
+                    streamDiv.appendChild(finalBlock);
+                    streamDiv.scrollTop = streamDiv.scrollHeight;
+                }
+
+                if (data.status === 'failed') {
+                    eventSource.close();
+                    const failBlock = document.createElement('div');
+                    failBlock.className = 'p-4 bg-red-600 text-white mt-4 rounded-lg';
+                    failBlock.innerText = `CRASHED: ${data.error}`;
+                    streamDiv.appendChild(failBlock);
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                console.error("SSE failed:", err);
+                eventSource.close();
+            };
+        }
+    </script>
+</body>
+</html>
