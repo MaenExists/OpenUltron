@@ -153,6 +153,65 @@ impl Neocortex {
         }
     }
 
+    /// Online lifelong plasticity from live conversational turn.
+    /// Learns sequence structure from the USER's input (listening to external grammar),
+    /// and establishes soft associative cross-links between user concepts and emitted concepts.
+    /// NEVER touches w_starter or w_trans using self-generated tokens (prevents positive-feedback echo runaway).
+    pub fn online_adapt_turn(
+        &mut self,
+        user_tokens: &[usize],
+        emitted_tokens: &[usize],
+        vocab: &Vocabulary,
+        dopamine: f32,
+    ) {
+        let colon_id = vocab.token_to_id(":");
+        let user_id = vocab.token_to_id("user");
+        let ultron_id = vocab.token_to_id("ultron");
+
+        let plasticity_rate = (0.5 + 0.5 * dopamine).clamp(0.3, 1.5);
+
+        // 1. Learn sequence transitions from the USER's language (listening and acquiring grammar)
+        for i in 1..user_tokens.len() {
+            let u = user_tokens[i - 1];
+            let v = user_tokens[i];
+            if !vocab.is_punctuation(u) && !vocab.is_punctuation(v) && u != user_id && v != user_id && u != colon_id && v != colon_id {
+                *self.w_trans.entry((u, v)).or_insert(0.0) += 0.8 * plasticity_rate;
+
+                if i >= 2 {
+                    let w = user_tokens[i - 2];
+                    if !vocab.is_punctuation(w) && w != user_id && w != colon_id {
+                        *self.w_tri.entry((w, u, v)).or_insert(0.0) += 1.0 * plasticity_rate;
+                    }
+                }
+            }
+        }
+
+        // 2. Soft Hebbian co-activation between user concepts and emitted concepts
+        for &u in user_tokens {
+            if u == user_id || u == colon_id || vocab.is_punctuation(u) {
+                continue;
+            }
+            let u_idf = vocab.idf(u);
+            if u_idf < 1.4 {
+                continue; // Skip common stop words
+            }
+
+            for &v in emitted_tokens {
+                if v == ultron_id || v == colon_id || vocab.is_punctuation(v) {
+                    continue;
+                }
+                let v_idf = vocab.idf(v);
+                if v_idf < 1.4 {
+                    continue; // Skip common stop words
+                }
+
+                *self.w_cross.entry((u, v)).or_insert(0.0) += 0.35 * plasticity_rate;
+                *self.w_assoc.entry((u, v)).or_insert(0.0) += 0.25 * plasticity_rate;
+                *self.w_assoc.entry((v, u)).or_insert(0.0) += 0.25 * plasticity_rate;
+            }
+        }
+    }
+
     /// Incorporate consolidated memory traces from Hippocampus.
     pub fn integrate_hippocampal_ripples(&mut self, ripples: &[(usize, usize, f32)]) {
         for &(u, v, w) in ripples {

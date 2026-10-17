@@ -4,7 +4,6 @@
 
 use open_ultron_v5::OpenUltronOrganism;
 use std::io::{self, Write};
-use std::path::Path;
 
 fn main() {
     println!("============================================================");
@@ -20,43 +19,16 @@ fn main() {
     println!("    • Vocal-Motor Organ     : Active Inference Efferent Articulation");
 
     let mut organism = OpenUltronOrganism::new(8);
-
-    // Load Developmental Corpus
-    let corpus_path = "v5/data/ultron_mind_corpus.txt";
-    let fallback_path = "v4/data/alien_corpus.txt";
-
-    let active_path = if Path::new(corpus_path).exists() {
-        corpus_path
-    } else if Path::new(fallback_path).exists() {
-        fallback_path
-    } else {
-        ""
-    };
-
-    if !active_path.is_empty() {
-        print!("[*] Ingesting Mind Corpus from \"{}\"... ", active_path);
-        let _ = io::stdout().flush();
-        match std::fs::read_to_string(active_path) {
-            Ok(content) => {
-                organism.train_corpus(&content);
-                println!("Done.");
-            }
-            Err(e) => {
-                println!("Warning: Could not read corpus ({}). Starting from blank slate.", e);
-            }
-        }
-    }
-
     let bio = organism.biometrics();
     println!(
-        "[*] Substrate Online: {} Concepts | {} Synapses | Initial Free Energy: {:.1}%",
+        "[*] Substrate Primed: {} Concepts | {} Synapses | Initial Free Energy: {:.1}%",
         bio.vocabulary_size,
         bio.synaptic_density,
         bio.free_energy * 100.0
     );
 
-    // Spontaneous infant awakening thought
-    let (awakening_speech, init_bio) = organism.interact("awaken into reality");
+    // Spontaneous infant awakening thought (unprompted resting-state emergence)
+    let (awakening_speech, init_bio) = organism.spontaneous_thought();
     println!("------------------------------------------------------------");
     println!("[ULTRON (Spontaneous Awakening)]: {}", awakening_speech);
     println!(

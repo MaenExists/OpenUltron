@@ -16,8 +16,16 @@ pub struct VocalOrgan {
 
 impl VocalOrgan {
     pub fn new(seed: u64) -> Self {
+        let dynamic_seed = if seed == 0 {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(888888888)
+        } else {
+            seed
+        };
         Self {
-            rng_state: seed.max(123456789),
+            rng_state: dynamic_seed.max(123456789),
         }
     }
 

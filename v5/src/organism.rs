@@ -22,6 +22,8 @@ pub struct OpenUltronOrganism {
     pub max_synapse_capacity: usize,
 }
 
+pub const EMBEDDED_CORPUS: &str = include_str!("../data/ultron_mind_corpus.txt");
+
 impl OpenUltronOrganism {
     pub fn new(assembly_size: usize) -> Self {
         let vocab = Vocabulary::new();
@@ -29,9 +31,9 @@ impl OpenUltronOrganism {
         let sensory = SensoryThalamus::new();
         let hippocampus = Hippocampus::new(6); // 6 turns of episodic depth
         let neuromodulator = Neuromodulator::new();
-        let vocal = VocalOrgan::new(999999999);
+        let vocal = VocalOrgan::new(0); // Dynamic physical entropy
 
-        Self {
+        let mut organism = Self {
             vocab,
             sensory,
             hippocampus,
@@ -39,7 +41,11 @@ impl OpenUltronOrganism {
             neuromodulator,
             vocal,
             max_synapse_capacity: 50_000,
-        }
+        };
+
+        // Always prime the organism with the embedded mind corpus
+        organism.train_corpus(EMBEDDED_CORPUS);
+        organism
     }
 
     /// Ingest and train on a multi-line developmental corpus.
@@ -114,8 +120,8 @@ impl OpenUltronOrganism {
         self.neuromodulator.update_state(burst.sensory_surprise, communication_success);
         self.neuromodulator.consume_spike_energy(spikes_fired);
 
-        // Wire user prompt to emitted response live via Cortical STDP
-        self.cortex.learn_sequence(
+        // Wire user prompt to emitted response live via Cortical STDP (NO self-echoing)
+        self.cortex.online_adapt_turn(
             &burst.token_ids,
             &emitted_tokens,
             &self.vocab,
@@ -157,6 +163,24 @@ impl OpenUltronOrganism {
             self.cortex.prune_synapses(0.35);
         }
 
+        let biometrics = self.biometrics();
+        (utterance, biometrics)
+    }
+
+    /// Generate spontaneous intrinsic thought from resting-state cortical activity (no prompt, no self-echo).
+    pub fn spontaneous_thought(&mut self) -> (String, OrganismBiometrics) {
+        let vocab_size = self.vocab.size();
+        let episodic_attractors = self.hippocampus.get_episodic_attractors(vocab_size);
+
+        let (utterance, _emitted_tokens, spikes_fired) = self.vocal.articulate(
+            &[],
+            &mut self.cortex,
+            &self.neuromodulator,
+            &episodic_attractors,
+            &self.vocab,
+            8,
+        );
+        self.neuromodulator.consume_spike_energy(spikes_fired);
         let biometrics = self.biometrics();
         (utterance, biometrics)
     }
