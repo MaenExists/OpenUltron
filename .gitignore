@@ -2,6 +2,7 @@
 target/
 **/target/
 **/*.rs.bk
+**/data/trained_brain.txt
 
 # OS & Editor
 .DS_Store

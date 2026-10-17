@@ -2,6 +2,7 @@ use open_ultron_v2::config::BrainConfig;
 use open_ultron_v2::brain::OpenUltronBrain;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::time::Instant;
 
 fn print_banner() {
@@ -13,44 +14,58 @@ fn print_banner() {
     println!("Learning:     Online Predictive STDP (Zero Backpropagation, Zero GPUs)\n");
 }
 
-fn prime_foundational_memory(brain: &mut OpenUltronBrain) {
-    print!("\x1b[1;33m[Bootstrap]\x1b[0m Priming foundational linguistic reflexes... ");
-    io::stdout().flush().unwrap();
-    let start = Instant::now();
+fn initialize_brain() -> OpenUltronBrain {
+    let mut config = BrainConfig::default();
+    config.reservoir_size = 5_000;
+    let mut brain = OpenUltronBrain::new(config);
 
-    let training_corpus = [
-        "hello, I am OpenUltron, an emergent artificial intelligence.",
-        "who are you? I am OpenUltron, born of complex systems and emergence.",
-        "how do you think? I do not use transformers. I think through ripples of spiking monads.",
-        "what is life? Life is self-organized criticality at the edge of chaos.",
-        "good morning! hello! how can I assist you today?",
-        "what is your purpose? To explore true synthetic intelligence through decentralized emergence.",
-        "can you learn? Yes, every word you send reorganizes my internal synapses in real time.",
-        "I think, therefore I am. I ripple, therefore I emerge.",
-        "OpenUltron awakens. The monads are in equilibrium.",
-    ];
+    let saved_state_path = "data/trained_brain.txt";
+    let conversations_path = "data/conversations.txt";
 
-    // Train 5 epochs across the primer corpus
-    for _ in 0..5 {
-        for text in &training_corpus {
-            brain.train_text(text);
+    if Path::new(saved_state_path).exists() {
+        print!("\x1b[1;33m[Bootstrap]\x1b[0m Restoring trained brain state from '{}'... ", saved_state_path);
+        io::stdout().flush().unwrap();
+        let start = Instant::now();
+        match brain.load_brain(saved_state_path) {
+            Ok(count) => println!("\x1b[1;32mLoaded {} synapses in {:.2?}\x1b[0m", count, start.elapsed()),
+            Err(e) => println!("\x1b[1;31mLoad error (rebuilding fresh): {}\x1b[0m", e),
+        }
+    } else {
+        print!("\x1b[1;33m[Bootstrap]\x1b[0m Training conversational language attractors... ");
+        io::stdout().flush().unwrap();
+        let start = Instant::now();
+
+        let corpus = if Path::new(conversations_path).exists() {
+            fs::read_to_string(conversations_path).unwrap_or_default()
+        } else {
+            String::from("User: hello\nUltron: hello, I am OpenUltron, an emergent artificial intelligence.\n")
+        };
+
+        // Train 8 epochs across the dialogue pairs
+        let mut total_chars = 0;
+        for _ in 0..8 {
+            let (steps, _) = brain.train_text(&corpus);
+            total_chars += steps;
+        }
+
+        let elapsed = start.elapsed();
+        println!("\x1b[1;32mDone in {:.2?}\x1b[0m ({} characters processed)", elapsed, total_chars);
+
+        // Persist trained state for instant startup
+        if let Err(e) = brain.save_brain(saved_state_path) {
+            eprintln!("Warning: could not cache brain state: {}", e);
         }
     }
 
-    let elapsed = start.elapsed();
-    println!("\x1b[1;32mDone in {:.2?}\x1b[0m", elapsed);
     let telem = brain.get_telemetry();
-    println!("Brain primed with {} active synapses across {} total monads.\n", telem.total_synapses, telem.total_monads);
+    println!("Brain online: {} active synapses across {} total monads.\n", telem.total_synapses, telem.total_monads);
+    brain
 }
 
 fn main() {
     print_banner();
 
-    let mut config = BrainConfig::default();
-    config.reservoir_size = 5_000; // Fast interactive response
-    let mut brain = OpenUltronBrain::new(config);
-
-    prime_foundational_memory(&mut brain);
+    let mut brain = initialize_brain();
 
     println!("\x1b[1;37mCommands:\x1b[0m");
     println!("  \x1b[1;33mchat <text>\x1b[0m        - Talk to OpenUltron (or just type your message directly)");
@@ -134,19 +149,16 @@ fn main() {
                 Err(e) => println!("\x1b[1;31mError loading brain:\x1b[0m {}", e),
             }
         } else {
-            // Default to chat mode!
+            // Chat mode:
             let prompt = if trimmed.starts_with("chat ") {
                 trimmed.strip_prefix("chat ").unwrap()
             } else {
                 trimmed
             };
 
-            // Also feed the user's message online into the brain so it continuously adapts!
-            brain.train_text(prompt);
-
             let start = Instant::now();
             let spikes_before = brain.monads.iter().map(|m| m.total_spikes).sum::<u64>();
-            let response = brain.generate_response(prompt, 60, 0.4);
+            let response = brain.generate_response(prompt, 60, 0.05);
             let spikes_after = brain.monads.iter().map(|m| m.total_spikes).sum::<u64>();
             let elapsed = start.elapsed();
 
@@ -157,6 +169,9 @@ fn main() {
                 elapsed,
                 (spikes_after.saturating_sub(spikes_before)) as f64 / elapsed.as_secs_f64().max(0.001)
             );
+
+            // Online real-time plasticity: user input leaves an echo
+            brain.train_text(prompt);
         }
     }
 }

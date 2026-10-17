@@ -13,7 +13,7 @@ use crate::motor::MotorVoice;
 use crate::sensory::{char_to_index, SensoryEyes, VOCAB_SIZE};
 use std::collections::VecDeque;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 
 #[derive(Debug, Clone)]
 struct InFlightPulse {
@@ -210,14 +210,15 @@ impl OpenUltronBrain {
 
             // 1. Perceive current character through the eyes
             self.perceive_character(current_char);
+            let sensory_field = self.eyes.receptive_field(current_char);
 
             // 2. Propagate for 2 micro-ticks to let waves traverse the reservoir
-            let mut recent_reservoir_spikes: Vec<MonadId> = Vec::new();
+            let mut recent_active_spikes: Vec<MonadId> = sensory_field;
             for _ in 0..2 {
                 let fired = self.tick();
                 for &id in &fired {
                     if id >= self.reservoir_start && id < self.motor_start {
-                        recent_reservoir_spikes.push(id);
+                        recent_active_spikes.push(id);
                     }
                 }
             }
@@ -231,31 +232,29 @@ impl OpenUltronBrain {
             }
             total_steps += 1;
 
-            // 4. Associative Plasticity (LTP on target, LTD on rivals)
+            // 4. Associative Plasticity (Dual-Pathway: Sensory & Reservoir -> Motor)
             if let Some(target_idx) = char_to_index(next_target_char) {
                 let target_motor_id = self.motor_start + target_idx;
 
-                // Potentiate connections from active reservoir cells to the target motor unit
-                for &res_id in &recent_reservoir_spikes {
+                for &src_id in &recent_active_spikes {
                     let mut found = false;
-                    for syn in &mut self.monads[res_id].synapses {
+                    for syn in &mut self.monads[src_id].synapses {
                         if syn.target_id == target_motor_id {
                             syn.weight = (syn.weight + self.config.lr_ltp).min(self.config.max_weight);
                             found = true;
                             break;
                         }
                     }
-                    if !found && self.monads[res_id].synapses.len() < 30 {
-                        self.monads[res_id].synapses.push(Synapse::new(target_motor_id, self.config.lr_ltp, 1));
+                    if !found && self.monads[src_id].synapses.len() < 35 {
+                        self.monads[src_id].synapses.push(Synapse::new(target_motor_id, self.config.lr_ltp, 1));
                     }
                 }
 
-                // Depress connections to incorrectly firing competitor motor units
                 if let Some(pred_idx) = char_to_index(predicted_char) {
                     if pred_idx != target_idx {
                         let wrong_motor_id = self.motor_start + pred_idx;
-                        for &res_id in &recent_reservoir_spikes {
-                            for syn in &mut self.monads[res_id].synapses {
+                        for &src_id in &recent_active_spikes {
+                            for syn in &mut self.monads[src_id].synapses {
                                 if syn.target_id == wrong_motor_id {
                                     syn.weight = (syn.weight - self.config.lr_ltd).max(self.config.min_weight);
                                 }
@@ -263,6 +262,11 @@ impl OpenUltronBrain {
                         }
                     }
                 }
+            }
+
+            // Reset motor potentials after each character step
+            for m_id in self.motor_start..self.total_monads {
+                self.monads[m_id].potential = 0.0;
             }
         }
 
@@ -277,45 +281,65 @@ impl OpenUltronBrain {
 
     /// Closed-loop conversational response generation
     pub fn generate_response(&mut self, prompt: &str, max_chars: usize, temperature: f32) -> String {
-        // 1. Prime the network with the prompt
-        for c in prompt.chars() {
+        let full_prompt = if prompt.starts_with("User: ") || prompt.contains("\nUltron: ") {
+            prompt.to_string()
+        } else {
+            format!("User: {}\nUltron: ", prompt)
+        };
+
+        // 1. Prime the network with the prompt (matching the 2-tick training phase)
+        for c in full_prompt.chars() {
             self.perceive_character(c);
+            self.tick();
             self.tick();
         }
 
         let mut output = String::new();
-        let mut last_char = prompt.chars().last().unwrap_or(' ');
+        let mut recent_chars: Vec<char> = Vec::new();
+        let mut last_char = full_prompt.chars().last().unwrap_or(' ');
 
         for _ in 0..max_chars {
             self.perceive_character(last_char);
             self.tick();
+            self.tick();
 
             let motor_activations = self.get_motor_activations();
-            let next_c = self.voice.decode(&motor_activations, temperature);
+            let next_c = self.voice.decode_with_penalty(&motor_activations, &recent_chars, 0.40, temperature);
+
+            // Reset chosen motor monad to avoid lingering excitation
+            if let Some(idx) = char_to_index(next_c) {
+                self.monads[self.motor_start + idx].potential = 0.0;
+            }
 
             // Stop condition on newline or sequence end
-            if next_c == '\n' && output.len() > 10 {
+            if next_c == '\n' && output.len() >= 3 {
                 break;
             }
 
             output.push(next_c);
+            recent_chars.push(next_c);
+            if recent_chars.len() > 4 {
+                recent_chars.remove(0);
+            }
             last_char = next_c;
         }
 
         output
     }
 
-    /// Save brain synaptic wiring to a file
+    /// Save brain synaptic wiring to a file using fast buffered writing
     pub fn save_brain(&self, path: &str) -> std::io::Result<()> {
-        let mut file = File::create(path)?;
-        writeln!(file, "# OpenUltron v2 Brain State")?;
-        writeln!(file, "total_monads:{}", self.total_monads)?;
+        let file = File::create(path)?;
+        let mut writer = BufWriter::new(file);
+        writeln!(writer, "# OpenUltron v2 Brain State")?;
+        writeln!(writer, "total_monads:{}", self.total_monads)?;
 
         for m in &self.monads {
             for syn in &m.synapses {
-                writeln!(file, "{} {} {:.6} {}", m.id, syn.target_id, syn.weight, syn.delay)?;
+                writeln!(writer, "{} {} {:.6} {}", m.id, syn.target_id, syn.weight, syn.delay)?;
             }
         }
+        writer.flush()?;
         Ok(())
     }
 

@@ -3,9 +3,9 @@
 //! Maps discrete linguistic characters into spatial-temporal spike bursts
 //! injected directly into the sensory receptive fields of the OpenUltron brain.
 
-pub const VOCAB_SIZE: usize = 97;
+pub const VOCAB_SIZE: usize = 96;
 
-/// Convert a character to a compact vocabulary index [0, 96].
+/// Convert a character to a compact vocabulary index [0, 95].
 pub fn char_to_index(c: char) -> Option<usize> {
     match c {
         '\n' => Some(0),
@@ -14,12 +14,12 @@ pub fn char_to_index(c: char) -> Option<usize> {
     }
 }
 
-/// Convert a vocabulary index [0, 96] back to its character.
+/// Convert a vocabulary index [0, 95] back to its character.
 pub fn index_to_char(idx: usize) -> char {
     match idx {
         0 => '\n',
         1..=95 => ((' ' as u8) + (idx - 1) as u8) as char,
-        _ => '?',
+        _ => ' ',
     }
 }
 

@@ -3,7 +3,7 @@
 //! Translates the collective firings and potentials of output Motor Monads
 //! into discrete generated linguistic characters.
 
-use crate::sensory::{index_to_char, VOCAB_SIZE};
+use crate::sensory::{char_to_index, index_to_char, VOCAB_SIZE};
 
 pub struct MotorVoice {
     pub total_motor_monads: usize,
@@ -17,17 +17,33 @@ impl MotorVoice {
     }
 
     /// Decode motor activity into the most activated character.
-    /// Supports temperature-based Boltzmann sampling for natural linguistic variety.
-    pub fn decode(&self, activations: &[f32], temperature: f32) -> char {
+    /// Supports temperature-based Boltzmann sampling and repetition penalty.
+    pub fn decode_with_penalty(
+        &self,
+        activations: &[f32],
+        recent_chars: &[char],
+        repetition_penalty: f32,
+        temperature: f32,
+    ) -> char {
         if activations.is_empty() {
             return ' ';
+        }
+
+        // Apply repetition penalty to recent characters
+        let mut penalized_activations = activations.to_vec();
+        for &rc in recent_chars {
+            if let Some(idx) = char_to_index(rc) {
+                if idx < penalized_activations.len() {
+                    penalized_activations[idx] -= repetition_penalty;
+                }
+            }
         }
 
         if temperature <= 0.05 {
             // Greedy Argmax
             let mut best_idx = 0;
             let mut max_val = f32::NEG_INFINITY;
-            for (i, &val) in activations.iter().enumerate() {
+            for (i, &val) in penalized_activations.iter().enumerate() {
                 if val > max_val {
                     max_val = val;
                     best_idx = i;
@@ -37,11 +53,11 @@ impl MotorVoice {
         }
 
         // Softmax temperature distribution
-        let max_val = activations.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let mut exp_weights = Vec::with_capacity(activations.len());
+        let max_val = penalized_activations.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let mut exp_weights = Vec::with_capacity(penalized_activations.len());
         let mut sum_exp = 0.0;
 
-        for &val in activations {
+        for &val in &penalized_activations {
             let exp_v = ((val - max_val) / temperature).exp();
             exp_weights.push(exp_v);
             sum_exp += exp_v;
@@ -51,7 +67,7 @@ impl MotorVoice {
             return ' ';
         }
 
-        // Pseudo-random sampling
+        // Deterministic sampling
         let mut seed = (activations.len() as u64)
             .wrapping_mul(48271)
             .wrapping_add((max_val.abs() * 10000.0) as u64);
@@ -66,6 +82,11 @@ impl MotorVoice {
             }
         }
 
-        index_to_char(activations.len() - 1)
+        index_to_char(penalized_activations.len() - 1)
+    }
+
+    /// Convenience wrapper for standard decoding without penalty
+    pub fn decode(&self, activations: &[f32], temperature: f32) -> char {
+        self.decode_with_penalty(activations, &[], 0.0, temperature)
     }
 }
