@@ -39,6 +39,12 @@ impl MotorVoice {
             }
         }
 
+        // If no motor unit received positive excitation, do not emit arbitrary unpenalized noise
+        let has_excitation = activations.iter().any(|&v| v > 0.001);
+        if !has_excitation {
+            return '\n'; // End of speech / silence
+        }
+
         if temperature <= 0.05 {
             // Greedy Argmax
             let mut best_idx = 0;

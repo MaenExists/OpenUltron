@@ -2,7 +2,12 @@
 target/
 **/target/
 **/*.rs.bk
+
+# Large Data & Trained Brain Caches
 **/data/trained_brain.txt
+**/data/literature.txt
+**/data/alice.txt
+**/data/vocab.txt
 
 # OS & Editor
 .DS_Store

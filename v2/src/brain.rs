@@ -10,7 +10,7 @@
 use crate::config::BrainConfig;
 use crate::monad::{Monad, MonadId, Synapse};
 use crate::motor::MotorVoice;
-use crate::sensory::{char_to_index, SensoryEyes, VOCAB_SIZE};
+use crate::sensory::{char_to_index, index_to_char, SensoryEyes, VOCAB_SIZE};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -81,13 +81,16 @@ impl OpenUltronBrain {
 
         let res_len = self.config.reservoir_size;
 
-        // 1. Wire Sensory -> Reservoir (Projections into Cognitive Mesh)
-        for s_id in self.sensory_start..self.reservoir_start {
-            // Each sensory monad connects to 8 random reservoir monads
-            for _ in 0..8 {
-                let target = self.reservoir_start + (rand_u32() as usize % res_len);
-                let weight = 0.6 + 0.4 * ((rand_u32() % 1000) as f32 / 1000.0);
-                self.monads[s_id].synapses.push(Synapse::new(target, weight, 1));
+        // 1. Wire Sensory -> Reservoir (Clustered Ensemble Projections)
+        for c_idx in 0..VOCAB_SIZE {
+            let cluster_start = (c_idx * 45) % res_len;
+            let sensory_field = self.eyes.receptive_field(index_to_char(c_idx));
+            for &s_id in &sensory_field {
+                for offset in 0..12 {
+                    let target_id = self.reservoir_start + ((cluster_start + offset) % res_len);
+                    let weight = 0.90 + 0.30 * ((rand_u32() % 1000) as f32 / 1000.0);
+                    self.monads[s_id].synapses.push(Synapse::new(target_id, weight, 1));
+                }
             }
         }
 
