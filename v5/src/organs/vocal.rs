@@ -34,7 +34,8 @@ impl VocalOrgan {
         matches!(
             tok,
             "a" | "an" | "the" | "my" | "your" | "its" | "our" | "their" | "to" | "of" | "in"
-                | "with" | "for" | "and" | "or" | "is" | "are" | "was" | "were" | ","
+                | "with" | "for" | "and" | "or" | "is" | "are" | "was" | "were" | "," | "through"
+                | "into" | "onto" | "towards" | "from" | "about" | "by" | "as" | "at" | "like"
         )
     }
 
@@ -237,7 +238,7 @@ impl VocalOrgan {
                 None
             };
 
-            // Calculate max causal transition support
+            // Calculate logarithmic causal transition support (Weber-Fechner sensory law)
             let mut max_causal: f32 = 0.0;
             for v in 4..vocab_size {
                 let bw = cortex.w_trans.get(&(prev_w, v)).copied().unwrap_or(0.0);
@@ -246,12 +247,12 @@ impl VocalOrgan {
                 } else {
                     0.0
                 };
-                let sup = bw * 1.0 + tw * 2.2;
+                let sup = (1.0 + bw).ln() * 1.0 + (1.0 + tw).ln() * 1.6;
                 if sup > max_causal {
                     max_causal = sup;
                 }
             }
-            let max_causal = max_causal.max(1.0);
+            let max_causal = max_causal.max(0.1);
 
             let mut candidates = Vec::with_capacity(vocab_size);
 
@@ -282,15 +283,15 @@ impl VocalOrgan {
                     0.0
                 };
 
-                let causal_support = (bigram_w * 1.0) + (trigram_w * 2.2);
+                let causal_support = (1.0 + bigram_w).ln() * 1.0 + (1.0 + trigram_w).ln() * 1.6;
 
-                let transition_score = if causal_support < 0.02 && !vocab.is_punctuation(v) {
-                    -28.0 // Steep penalty for physically non-existent transitions
+                let transition_score = if causal_support < 0.05 && !vocab.is_punctuation(v) {
+                    -25.0 // Steep penalty for physically non-existent transitions
                 } else {
                     (causal_support / max_causal) * 4.2
                 };
 
-                let attractor_pull = attractor[v] * 2.4;
+                let attractor_pull = attractor[v] * 2.8;
 
                 // Synaptic vesicle depression (strict anti-cycling inhibition)
                 let rep_count = emitted_tokens.iter().filter(|&&id| id == v).count();

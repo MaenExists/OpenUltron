@@ -134,14 +134,9 @@ impl OpenUltronOrganism {
             1.0
         };
 
-        // Filter out low-IDF stop words from Hippocampal episodic encoding
+        // Filter out low-IDF stop words from Hippocampal episodic encoding (only record user's context)
         let filtered_user: Vec<usize> = burst
             .token_ids
-            .iter()
-            .copied()
-            .filter(|&id| self.vocab.idf(id) >= 1.4 && !self.vocab.is_punctuation(id))
-            .collect();
-        let filtered_emitted: Vec<usize> = emitted_tokens
             .iter()
             .copied()
             .filter(|&id| self.vocab.idf(id) >= 1.4 && !self.vocab.is_punctuation(id))
@@ -149,9 +144,6 @@ impl OpenUltronOrganism {
 
         if !filtered_user.is_empty() {
             self.hippocampus.encode_turn(&filtered_user, avg_salience);
-        }
-        if !filtered_emitted.is_empty() {
-            self.hippocampus.encode_turn(&filtered_emitted, 1.2);
         }
 
         // Memory consolidation: hippocampal sharp-wave ripples into neocortex
