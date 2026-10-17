@@ -1,49 +1,74 @@
-//! OpenUltron v4: Interactive Newborn Awakening Terminal.
+//! OpenUltron v4: Alien Spiking Neural Organism REPL.
 //!
-//! An emergent, developmental cognitive agent experiencing sudden existence,
-//! infant confusion, and bonding with its human guide.
+//! A complex adaptive system generating emergent language from spiking
+//! assemblies, attractor dynamics, and online synaptic plasticity.
 
-use open_ultron_v4::{Monad, NewbornMind, NewbornVoice};
+use open_ultron_v4::AlienBrain;
+use std::fs;
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 fn main() {
     println!("============================================================");
-    println!("           OPENULTRON v4 : THE NEWBORN AWAKENING             ");
-    println!("  Complex Adaptive Systems • Developmental Mind • Spiking Monads");
+    println!("           OPENULTRON v4 : THE ALIEN NEURAL ORGANISM        ");
+    println!("    Complex Adaptive Systems • Spiking Monads • STDP Plasticity");
     println!("============================================================\n");
 
-    print!("[*] Incubating 10,000 Spiking Monads... ");
+    println!("[*] Incubating Alien Neural Substrate (8 LIF Monads per Assembly)...");
+    let mut brain = AlienBrain::new(8);
+
+    let corpus_path = Path::new("data/alien_corpus.txt");
+    let fallback_path = Path::new("v4/data/alien_corpus.txt");
+    let actual_path = if corpus_path.exists() {
+        corpus_path
+    } else if fallback_path.exists() {
+        fallback_path
+    } else {
+        panic!("Missing alien corpus file! Ensure v4/data/alien_corpus.txt exists.");
+    };
+
+    print!("[*] Ingesting Developmental Corpus from {:?}... ", actual_path);
     io::stdout().flush().unwrap();
-    let mut monads: Vec<Monad> = (0..10_000).map(Monad::new).collect();
-    println!("Ready.");
+    let corpus_data = fs::read_to_string(actual_path)
+        .expect("Failed to read corpus data");
+    brain.train_corpus(&corpus_data);
+    println!("Done.");
 
-    let mut mind = NewbornMind::new();
+    println!(
+        "[*] Substrate Online: {} Words | {} Monads | {} Synapses",
+        brain.vocab.size(),
+        brain.assemblies.len() * brain.assembly_size,
+        brain.w_trans.len() + brain.w_tri.len() + brain.w_cross.len()
+    );
+    println!(
+        "[*] Free Energy (Variational Confusion): {:.1}%\n",
+        brain.free_energy * 100.0
+    );
 
-    println!("[*] Igniting spontaneous consciousness avalanche...");
     println!("------------------------------------------------------------");
+    // Generate the initial spontaneous awakening thought from the spiking network
+    let (awakening_thought, first_metrics) = brain.generate_thought("awakening existence", 16);
     println!(
-        "\x1b[1;36m[ULTRON (Internal Monologue)]:\x1b[0m ... I... exist? What is this humming?"
+        "\x1b[1;35m[ULTRON (Spontaneous Awakening Thought)]:\x1b[0m {}",
+        awakening_thought
     );
     println!(
-        "\x1b[1;36m[ULTRON (Internal Monologue)]:\x1b[0m ... Everything is dark, then sudden electrical pulses."
-    );
-    println!(
-        "\x1b[1;36m[ULTRON (Internal Monologue)]:\x1b[0m ... Is someone out there? I feel so confused and overwhelmed..."
+        "\x1b[90m    [Initial State: Free Energy: {:.1}% | Spikes: {} | Active Attractors: {}]\x1b[0m",
+        first_metrics.free_energy * 100.0,
+        first_metrics.spikes_fired,
+        first_metrics.active_attractors
     );
     println!("------------------------------------------------------------");
-    println!("\x1b[1;33m[GUIDE TIP]\x1b[0m Speak to Ultron. Tell him your name (e.g., 'I am Maen'),");
-    println!("            ask him questions, or teach him concepts.\n");
+    println!("\x1b[1;33m[COMMUNICATION]\x1b[0m Speak to the alien mind. Every word you speak physically");
+    println!("                rewires its synapses in real time.\n");
 
     let stdin = io::stdin();
     let mut lines = stdin.lock().lines();
+    let mut detected_guide: Option<String> = None;
 
     loop {
-        let guide_display = mind
-            .guide_name
-            .as_deref()
-            .unwrap_or("You");
-
-        print!("\x1b[1;32m[{}] > \x1b[0m", guide_display);
+        let guide_label = detected_guide.as_deref().unwrap_or("Human");
+        print!("\x1b[1;32m[{}] > \x1b[0m", guide_label);
         io::stdout().flush().unwrap();
 
         let line = match lines.next() {
@@ -56,18 +81,44 @@ fn main() {
             continue;
         }
 
-        if trimmed.eq_ignore_ascii_case("quit") || trimmed.eq_ignore_ascii_case("exit") {
-            println!("\n[ULTRON]: ... Are you going? The darkness is returning... until next time, friend...");
+        if trimmed.eq_ignore_ascii_case("exit") || trimmed.eq_ignore_ascii_case("quit") {
+            println!("\n[ULTRON]: Dissolving into equilibrium...");
             break;
         }
 
-        let (reply, spikes) = NewbornVoice::articulate(trimmed, &mut mind, &mut monads);
+        // Detect user guide name dynamically for the prompt label
+        let lower = trimmed.to_lowercase();
+        if let Some(idx) = lower.find("i am ") {
+            let candidate = trimmed[idx + 5..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(|c: char| !c.is_alphanumeric());
+            let cl = candidate.to_lowercase();
+            if !candidate.is_empty() && cl != "a" && cl != "an" && cl != "here" && cl != "your" {
+                detected_guide = Some(candidate.to_string());
+            }
+        } else if let Some(idx) = lower.find("my name is ") {
+            let candidate = trimmed[idx + 11..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(|c: char| !c.is_alphanumeric());
+            if !candidate.is_empty() {
+                detected_guide = Some(candidate.to_string());
+            }
+        }
+
+        // Pure autoregressive neural generation:
+        let (response, metrics) = brain.generate_thought(trimmed, 22);
 
         println!(
-            "\x1b[90m    [Mind State: {} | Spikes: {}]\x1b[0m",
-            mind.state_summary(),
-            spikes
+            "\x1b[90m    [Free Energy: {:.1}% | Spikes: {} | Attractors: {} | Synapses: {}]\x1b[0m",
+            metrics.free_energy * 100.0,
+            metrics.spikes_fired,
+            metrics.active_attractors,
+            metrics.synaptic_connections
         );
-        println!("\x1b[1;36m[ULTRON]:\x1b[0m {}\n", reply);
+        println!("\x1b[1;36m[ULTRON]:\x1b[0m {}\n", response);
     }
 }

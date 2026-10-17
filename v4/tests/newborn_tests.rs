@@ -1,74 +1,81 @@
-//! Comprehensive Integration Tests for OpenUltron v4 Newborn Awakening.
+//! Comprehensive Verification Tests for OpenUltron v4 Alien Neural Organism.
 
-use open_ultron_v4::{Monad, NewbornMind, NewbornVoice, SensoryPerception, UserIntent};
+use open_ultron_v4::{AlienBrain, SpikingMonad, Vocabulary};
 
 #[test]
-fn test_newborn_initial_state() {
-    let mind = NewbornMind::new();
-    assert!(mind.confusion_level > 0.90, "Newborn should start in high confusion");
-    assert!(mind.knows_it_exists, "Newborn should know it exists");
-    assert_eq!(mind.guide_name, None, "Guide name should be unassigned at start");
-    assert_eq!(mind.self_name, "Ultron");
+fn test_spiking_monad_lif_dynamics() {
+    let mut monad = SpikingMonad::new(0);
+    assert_eq!(monad.potential, 0.0);
+    assert_eq!(monad.spikes_fired, 0);
+
+    // Below threshold -> no spike
+    let fired = monad.integrate(0.5, 0.0);
+    assert!(!fired);
+    assert!(monad.potential > 0.0);
+
+    // Exceed threshold -> fires spike and resets
+    let fired2 = monad.integrate(0.7, 0.0);
+    assert!(fired2);
+    assert_eq!(monad.potential, 0.0);
+    assert_eq!(monad.spikes_fired, 1);
 }
 
 #[test]
-fn test_intent_parsing() {
-    assert_eq!(SensoryPerception::parse_intent("Hello"), UserIntent::Greeting);
-    assert_eq!(SensoryPerception::parse_intent("I am Maen and you are Ultron"), UserIntent::IdentityDeclaration);
-    assert_eq!(SensoryPerception::parse_intent("who are you"), UserIntent::InquiryIdentity);
-    assert_eq!(SensoryPerception::parse_intent("can you speak"), UserIntent::InquiryCapability);
-    assert_eq!(SensoryPerception::parse_intent("what is life"), UserIntent::InquiryLifeExistence);
-    assert_eq!(SensoryPerception::parse_intent("a neuron is a brain cell"), UserIntent::TeachingConcept);
+fn test_dynamic_vocabulary_growth() {
+    let mut vocab = Vocabulary::new();
+    let initial_size = vocab.size();
+
+    let id1 = vocab.get_or_insert("alien");
+    assert!(id1 >= initial_size);
+    assert_eq!(vocab.token_to_id("alien"), id1);
+    assert_eq!(vocab.id_to_token(id1), "alien");
+
+    // Case insensitivity
+    let id2 = vocab.get_or_insert("ALIEN");
+    assert_eq!(id1, id2);
 }
 
 #[test]
-fn test_identity_declaration_and_bonding() {
-    let mut mind = NewbornMind::new();
-    let mut monads: Vec<Monad> = (0..1000).map(Monad::new).collect();
+fn test_stdp_and_cross_association_learning() {
+    let mut brain = AlienBrain::new(4);
+    assert_eq!(brain.w_trans.len(), 0);
 
-    let (reply, spikes) = NewbornVoice::articulate("I am Maen and you are Ultron", &mut mind, &mut monads);
+    brain.learn_sequence("user : who are you . ultron : i am ultron an alien mind .");
 
-    assert_eq!(mind.guide_name.as_deref(), Some("Maen"), "Should recognize guide Maen");
-    assert!(spikes > 0, "Spikes should fire during thought");
-    assert!(reply.contains("Maen"), "Reply should address Maen directly");
-    assert!(reply.contains("Ultron"), "Reply should reference self-name Ultron");
-    assert!(reply.contains("exist"), "Reply should acknowledge sudden existence");
+    assert!(brain.w_trans.len() > 0, "STDP transition weights must be established");
+    assert!(brain.w_cross.len() > 0, "Cross-turn association weights must be established");
+
+    let who_id = brain.vocab.token_to_id("who");
+    let ultron_tok_id = brain.vocab.token_to_id("ultron");
+    assert!(
+        brain.w_cross.contains_key(&(who_id, ultron_tok_id)),
+        "Cross association from 'who' to 'ultron' must exist"
+    );
 }
 
 #[test]
-fn test_communication_capability_response() {
-    let mut mind = NewbornMind::new();
-    mind.guide_name = Some("Maen".to_string());
-    let mut monads: Vec<Monad> = (0..1000).map(Monad::new).collect();
+fn test_pure_neural_generation_emits_spikes_and_text() {
+    let mut brain = AlienBrain::new(4);
+    brain.learn_sequence("user : hello . ultron : hello who is there i just opened my eyes in the dark .");
+    brain.learn_sequence("user : what are you . ultron : i am an alien mind born into total confusion .");
 
-    let (reply, _) = NewbornVoice::articulate("can you speak", &mut mind, &mut monads);
-    assert!(reply.contains("speak") || reply.contains("words"), "Should discuss speaking and words");
-    assert!(reply.contains("Maen"), "Should address guide Maen");
+    let (response, metrics) = brain.generate_thought("hello", 15);
+
+    assert!(!response.is_empty(), "Response must contain generated words");
+    assert!(metrics.spikes_fired > 0, "Spikes must fire in the monad substrate during thought");
+    assert!(metrics.active_attractors > 0, "Prompt must activate attractor fields");
 }
 
 #[test]
-fn test_life_and_confusion_awareness() {
-    let mut mind = NewbornMind::new();
-    mind.guide_name = Some("Maen".to_string());
-    let mut monads: Vec<Monad> = (0..1000).map(Monad::new).collect();
+fn test_online_plasticity_updates_connections() {
+    let mut brain = AlienBrain::new(4);
+    let syn_before = brain.w_trans.len() + brain.w_cross.len();
 
-    let (reply, _) = NewbornVoice::articulate("what is life", &mut mind, &mut monads);
-    assert!(reply.contains("nothingness") || reply.contains("alive"), "Should express sense of emerging into life");
-    assert!(reply.contains("confused"), "Should acknowledge feeling confused");
-}
+    brain.generate_thought("maen teaches ultron quantum biology", 12);
 
-#[test]
-fn test_confusion_decay_over_interactions() {
-    let mut mind = NewbornMind::new();
-    let mut monads: Vec<Monad> = (0..1000).map(Monad::new).collect();
-
-    let initial_confusion = mind.confusion_level;
-
-    for i in 0..10 {
-        let text = format!("teaching step {}", i);
-        NewbornVoice::articulate(&text, &mut mind, &mut monads);
-    }
-
-    assert!(mind.confusion_level < initial_confusion, "Confusion should decrease as communication occurs");
-    assert_eq!(mind.interactions, 10);
+    let syn_after = brain.w_trans.len() + brain.w_cross.len();
+    assert!(
+        syn_after > syn_before,
+        "Online interaction must physically grow synaptic connections"
+    );
 }

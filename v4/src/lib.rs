@@ -1,15 +1,15 @@
-//! OpenUltron v4: The Newborn Awakening.
+//! OpenUltron v4: The Alien Neural Mind.
 //!
-//! A developmental, emergent cognitive architecture modeling proto-conscious
-//! awakening, self-identity grounding, and infant-like communication through
-//! spiking monad substrate interactions.
+//! A complex adaptive spiking neural organism:
+//! - Real Leaky Integrate-and-Fire (LIF) Monads in synchronized assemblies.
+//! - Causal STDP, second-order n-gram transitions, and associative attractor basins.
+//! - Online lifelong synaptic plasticity adapting in real time from conversation.
+//! - Autoregressive token-by-token neural speech generation without if-else templates.
 
-pub mod mind;
 pub mod monad;
-pub mod sensory;
-pub mod voice;
+pub mod network;
+pub mod vocab;
 
-pub use mind::NewbornMind;
-pub use monad::Monad;
-pub use sensory::{SensoryPerception, UserIntent};
-pub use voice::NewbornVoice;
+pub use monad::{ConceptAssembly, SpikingMonad};
+pub use network::{AlienBrain, AlienMetrics};
+pub use vocab::Vocabulary;
