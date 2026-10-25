@@ -29,6 +29,8 @@ set(SPARK_CORE_SOURCES
     src/environment.cpp
     src/learning.cpp
     src/trainer.cpp
+    src/baselines.cpp
+    src/experiment_runner.cpp
 )
 
 add_library(spark_core STATIC ${SPARK_CORE_SOURCES})
@@ -62,3 +64,11 @@ add_test(NAME test_gradients COMMAND test_gradients)
 add_executable(test_learning tests/test_learning.cpp)
 target_link_libraries(test_learning PRIVATE spark_core)
 add_test(NAME test_learning COMMAND test_learning)
+
+add_executable(test_baselines tests/test_baselines.cpp)
+target_link_libraries(test_baselines PRIVATE spark_core)
+add_test(NAME test_baselines COMMAND test_baselines)
+
+add_executable(test_regression tests/test_regression.cpp)
+target_link_libraries(test_regression PRIVATE spark_core)
+add_test(NAME test_regression COMMAND test_regression)

@@ -28,12 +28,22 @@
   - Verified learning on delay-copy task: 100% test accuracy on delay-1, 72.59% on delay-3.
   - Command-line training interface `spark train`.
 
+- **Phase 3: Scientific Validation & Memory Investigation** (Completed: 2026-10-25)
+  - Code audit confirming target alignment, warmup exclusion, and generator isolation.
+  - Reproduced Phase 2 baseline results (100% on Delay-1, 72.59% on Delay-3).
+  - Implemented 5 control baselines: Shift-Register Oracle (100%), Constant Predictor (49.25%), Memoryless Predictor (54.77%), Untrained SPARK (46.73%), Trained SPARK (100.00%).
+  - Evaluated memory capacity across Delays 1, 2, 3, 5 with 64 and 128 units over 80 seeded runs (Delay-1: 100%, Delay-3: 82.28%, Delay-5: 71.90%).
+  - Diagnosed Delay-3 degradation: identified recurrent signal attenuation $\beta^d$; confirmed scaling $\beta=1.5$ reaches **100.00% accuracy** on Delay-3.
+  - Inference-time ablations verified memory depends on learned recurrent weights and dynamics (state reset drops accuracy to 44.72%, $W=0$ drops to 51.76%).
+  - Automated regression suite (`test_baselines`, `test_regression`) passing 100%.
+  - Produced `docs/PHASE3_FINDINGS.md` and CSV export registries.
+
 ## In Progress
-- **Phase 3: Scientific Comparison & Baselines**
+- **Phase 4: Local Learning & Eligibility Traces**
 
 ## Pending Phases
-- Phase 3: Scientific Comparison & Baselines
 - Phase 4: Local Learning & Eligibility Traces
+- Phase 5: World-Model Experiments
 - Phase 5: World-Model Experiments
 - Phase 6: Iterative Internal Computation
 - Phase 7: Adaptive Topology

@@ -2,6 +2,8 @@
 #include "spark/metrics.hpp"
 #include "spark/environment.hpp"
 #include "spark/trainer.hpp"
+#include "spark/baselines.hpp"
+#include "spark/experiment_runner.hpp"
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -12,7 +14,7 @@
 void print_banner() {
     std::cout << "========================================================\n"
               << "  OpenUltron :: SPARK (Sparse Predictive Adaptive Recurrent Kernel)\n"
-              << "  Version 0.2.0 (Phase 2: Learning with Exact Gradients - TBPTT)\n"
+              << "  Version 0.3.0 (Phase 3: Scientific Validation & Memory Investigation)\n"
               << "========================================================\n" << std::endl;
 }
 
@@ -38,6 +40,10 @@ void print_info() {
               << "  spark demo\n"
               << "  spark benchmark [--units N] [--fan-in K] [--ticks T] [--seed S] [--topology random|clustered]\n"
               << "  spark train [--task delay-copy] [--delay D] [--units N] [--fan-in K] [--steps S] [--unroll U] [--lr LR] [--seed S]\n"
+              << "  spark baselines [--delay D] [--units N] [--seed S]\n"
+              << "  spark capacity [--seeds S] [--csv PATH]\n"
+              << "  spark diagnose [--csv PATH]\n"
+              << "  spark ablate [--delay D] [--units N] [--seed S]\n"
               << std::endl;
 }
 
@@ -355,6 +361,66 @@ void run_train(int argc, char* argv[]) {
               << std::endl;
 }
 
+void run_baselines_cmd(int argc, char* argv[]) {
+    uint32_t delay = 1;
+    uint32_t units = 64;
+    uint64_t seed = 42ULL;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--delay" && i + 1 < argc) delay = std::stoul(argv[++i]);
+        else if (arg == "--units" && i + 1 < argc) units = std::stoul(argv[++i]);
+        else if (arg == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
+    }
+
+    print_banner();
+    spark::ExperimentRunner::compare_baselines(delay, units, seed);
+}
+
+void run_capacity_cmd(int argc, char* argv[]) {
+    size_t num_seeds = 10;
+    std::string csv_path = "experiments/results/capacity_results.csv";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--seeds" && i + 1 < argc) num_seeds = std::stoul(argv[++i]);
+        else if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    print_banner();
+    std::vector<uint32_t> delays = {1, 2, 3, 5};
+    std::vector<uint32_t> unit_counts = {64, 128};
+    spark::ExperimentRunner::run_capacity_suite(delays, unit_counts, num_seeds, csv_path);
+}
+
+void run_diagnose_cmd(int argc, char* argv[]) {
+    std::string csv_path = "experiments/results/delay3_diagnostic.csv";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    print_banner();
+    spark::ExperimentRunner::run_delay3_diagnostic_suite(csv_path);
+}
+
+void run_ablate_cmd(int argc, char* argv[]) {
+    uint32_t delay = 1;
+    uint32_t units = 64;
+    uint64_t seed = 42ULL;
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--delay" && i + 1 < argc) delay = std::stoul(argv[++i]);
+        else if (arg == "--units" && i + 1 < argc) units = std::stoul(argv[++i]);
+        else if (arg == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
+    }
+
+    print_banner();
+    spark::ExperimentRunner::run_inference_ablations(delay, units, seed);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_info();
@@ -370,6 +436,14 @@ int main(int argc, char* argv[]) {
         run_benchmark(argc, argv);
     } else if (cmd == "train") {
         run_train(argc, argv);
+    } else if (cmd == "baselines") {
+        run_baselines_cmd(argc, argv);
+    } else if (cmd == "capacity") {
+        run_capacity_cmd(argc, argv);
+    } else if (cmd == "diagnose") {
+        run_diagnose_cmd(argc, argv);
+    } else if (cmd == "ablate") {
+        run_ablate_cmd(argc, argv);
     } else {
         std::cerr << "Unknown command: '" << cmd << "'\n"
                   << "Run 'spark info' for available commands." << std::endl;
