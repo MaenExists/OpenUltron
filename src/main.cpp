@@ -1,5 +1,7 @@
 #include "spark/network.hpp"
 #include "spark/metrics.hpp"
+#include "spark/environment.hpp"
+#include "spark/trainer.hpp"
 #include <iostream>
 #include <iomanip>
 #include <string>
@@ -10,7 +12,7 @@
 void print_banner() {
     std::cout << "========================================================\n"
               << "  OpenUltron :: SPARK (Sparse Predictive Adaptive Recurrent Kernel)\n"
-              << "  Version 0.1.0 (Phase 0 & 1: Sparse Recurrent Computation)\n"
+              << "  Version 0.2.0 (Phase 2: Learning with Exact Gradients - TBPTT)\n"
               << "========================================================\n" << std::endl;
 }
 
@@ -29,11 +31,13 @@ void print_info() {
               << "  Precision            : Single Precision IEEE-754 (FP32)\n"
               << "  Graph Storage        : Compressed Sparse Row (CSR)\n"
               << "  Recurrence Mode      : Synchronous Double Buffering\n"
+              << "  Training Mode        : Truncated Backpropagation Through Time (TBPTT)\n"
               << "  Supported Topologies : RandomSparse, ClusteredSparse, AdaptiveSparse\n"
               << "\n[CLI Usage]\n"
               << "  spark info\n"
               << "  spark demo\n"
               << "  spark benchmark [--units N] [--fan-in K] [--ticks T] [--seed S] [--topology random|clustered]\n"
+              << "  spark train [--task delay-copy] [--delay D] [--units N] [--fan-in K] [--steps S] [--unroll U] [--lr LR] [--seed S]\n"
               << std::endl;
 }
 
@@ -267,6 +271,90 @@ void run_benchmark(int argc, char* argv[]) {
               << std::endl;
 }
 
+void run_train(int argc, char* argv[]) {
+    std::string task = "delay-copy";
+    uint32_t delay = 1;
+    uint32_t units = 128;
+    uint32_t fan_in = 8;
+    uint32_t steps = 1500;
+    uint32_t unroll = 8;
+    float lr = 0.03f;
+    float clip = 1.0f;
+    uint32_t eval_interval = 150;
+    uint64_t seed = 42ULL;
+    std::string topology = "random";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--task" && i + 1 < argc) task = argv[++i];
+        else if (arg == "--delay" && i + 1 < argc) delay = std::stoul(argv[++i]);
+        else if (arg == "--units" && i + 1 < argc) units = std::stoul(argv[++i]);
+        else if (arg == "--fan-in" && i + 1 < argc) fan_in = std::stoul(argv[++i]);
+        else if (arg == "--steps" && i + 1 < argc) steps = std::stoul(argv[++i]);
+        else if (arg == "--unroll" && i + 1 < argc) unroll = std::stoul(argv[++i]);
+        else if (arg == "--lr" && i + 1 < argc) lr = std::stof(argv[++i]);
+        else if (arg == "--clip" && i + 1 < argc) clip = std::stof(argv[++i]);
+        else if (arg == "--eval-interval" && i + 1 < argc) eval_interval = std::stoul(argv[++i]);
+        else if (arg == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
+        else if (arg == "--topology" && i + 1 < argc) topology = argv[++i];
+    }
+
+    print_banner();
+    std::cout << ">>> Training SPARK with Exact Gradients (TBPTT) <<<\n"
+              << "  Task                 : " << task << " (Delay: " << delay << ")\n"
+              << "  Recurrent Units      : " << units << "\n"
+              << "  Fan-in               : " << fan_in << " incoming connections/unit\n"
+              << "  Training Steps       : " << steps << " windows\n"
+              << "  BPTT Unroll Window   : " << unroll << " steps\n"
+              << "  Learning Rate        : " << lr << "\n"
+              << "  Max Grad Norm        : " << clip << "\n"
+              << "  Topology             : " << topology << "\n"
+              << "  Random Seed          : " << seed << "\n"
+              << std::endl;
+
+    spark::SparseGraphConfig graph_cfg;
+    graph_cfg.num_units = units;
+    graph_cfg.fan_in = fan_in;
+    graph_cfg.seed = seed;
+    if (topology == "clustered") {
+        graph_cfg.topology = spark::TopologyType::ClusteredSparse;
+        graph_cfg.num_clusters = std::max(2u, units / 32);
+        graph_cfg.intra_cluster_prob = 0.8f;
+    } else {
+        graph_cfg.topology = spark::TopologyType::RandomSparse;
+    }
+
+    spark::NetworkConfig net_cfg;
+    net_cfg.num_units = units;
+    net_cfg.input_dim = 1;
+    net_cfg.output_dim = 1;
+    net_cfg.alpha = 0.8f;
+    net_cfg.beta = 0.5f;
+    net_cfg.seed = seed;
+
+    spark::MicroUnitNetwork net(net_cfg, graph_cfg);
+
+    // Create training and held-out evaluation environments with distinct seeds
+    spark::TemporalMemoryEnv train_env(delay, 200, seed);
+    spark::TemporalMemoryEnv eval_env(delay, 200, seed + 1000ULL);
+
+    std::cout << "Starting supervised TBPTT training loop..." << std::endl;
+    spark::Trainer trainer(net, train_env, &eval_env, lr, clip);
+    auto summary = trainer.train(steps, unroll, eval_interval, false);
+
+    std::cout << "\nTraining Complete!\n"
+              << "--------------------------------------------------------\n"
+              << "  Initial Loss         : " << std::fixed << std::setprecision(5) << summary.initial_loss << "\n"
+              << "  Final Train Loss     : " << summary.final_train_loss << "\n"
+              << "  Final Eval Loss      : " << summary.final_eval_loss << "\n"
+              << "  Final Eval Accuracy  : " << std::setprecision(2)
+              << (summary.final_eval_accuracy * 100.0f) << "%\n"
+              << "  Total Wall Time      : " << std::setprecision(2) << summary.total_seconds << " s\n"
+              << "  Steps / Second       : " << (summary.steps_completed / summary.total_seconds) << " updates/s\n"
+              << "--------------------------------------------------------\n"
+              << std::endl;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_info();
@@ -280,6 +368,8 @@ int main(int argc, char* argv[]) {
         run_demo();
     } else if (cmd == "benchmark") {
         run_benchmark(argc, argv);
+    } else if (cmd == "train") {
+        run_train(argc, argv);
     } else {
         std::cerr << "Unknown command: '" << cmd << "'\n"
                   << "Run 'spark info' for available commands." << std::endl;

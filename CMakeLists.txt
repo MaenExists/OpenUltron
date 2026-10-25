@@ -26,6 +26,9 @@ set(SPARK_CORE_SOURCES
     src/graph.cpp
     src/network.cpp
     src/metrics.cpp
+    src/environment.cpp
+    src/learning.cpp
+    src/trainer.cpp
 )
 
 add_library(spark_core STATIC ${SPARK_CORE_SOURCES})
@@ -51,3 +54,11 @@ add_test(NAME test_graph COMMAND test_graph)
 add_executable(test_forward tests/test_forward.cpp)
 target_link_libraries(test_forward PRIVATE spark_core)
 add_test(NAME test_forward COMMAND test_forward)
+
+add_executable(test_gradients tests/test_gradients.cpp)
+target_link_libraries(test_gradients PRIVATE spark_core)
+add_test(NAME test_gradients COMMAND test_gradients)
+
+add_executable(test_learning tests/test_learning.cpp)
+target_link_libraries(test_learning PRIVATE spark_core)
+add_test(NAME test_learning COMMAND test_learning)
