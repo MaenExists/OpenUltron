@@ -13,6 +13,7 @@ struct BaselineResult {
     std::string name;
     float accuracy = 0.0f;
     float loss = 0.0f;
+    size_t correct_steps = 0;
     size_t evaluated_steps = 0;
 };
 

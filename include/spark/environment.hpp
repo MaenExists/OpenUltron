@@ -36,6 +36,7 @@ public:
     TemporalMemoryEnv(uint32_t delay, uint32_t sequence_length, uint64_t seed = 42ULL);
 
     void reset() override;
+    void reset_to_initial_seed();
     Observation get_observation() const override;
     Target get_target() const override;
     void step() override;

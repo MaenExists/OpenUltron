@@ -82,6 +82,7 @@ BaselineResult BaselineEvaluator::evaluate_oracle(ShiftRegisterOracle& oracle, E
     }
 
     res.evaluated_steps = valid_count;
+    res.correct_steps = correct_count;
     if (valid_count > 0) {
         res.accuracy = static_cast<float>(correct_count) / static_cast<float>(valid_count);
         res.loss = static_cast<float>(total_loss / valid_count);
@@ -117,6 +118,7 @@ BaselineResult BaselineEvaluator::evaluate_constant(const ConstantPredictor& pre
     }
 
     res.evaluated_steps = valid_count;
+    res.correct_steps = correct_count;
     if (valid_count > 0) {
         res.accuracy = static_cast<float>(correct_count) / static_cast<float>(valid_count);
         res.loss = static_cast<float>(total_loss / valid_count);
@@ -152,6 +154,7 @@ BaselineResult BaselineEvaluator::evaluate_memoryless(const MemorylessPredictor&
     }
 
     res.evaluated_steps = valid_count;
+    res.correct_steps = correct_count;
     if (valid_count > 0) {
         res.accuracy = static_cast<float>(correct_count) / static_cast<float>(valid_count);
         res.loss = static_cast<float>(total_loss / valid_count);
@@ -188,6 +191,7 @@ BaselineResult BaselineEvaluator::evaluate_untrained_spark(MicroUnitNetwork& net
     }
 
     res.evaluated_steps = valid_count;
+    res.correct_steps = correct_count;
     if (valid_count > 0) {
         res.accuracy = static_cast<float>(correct_count) / static_cast<float>(valid_count);
         res.loss = static_cast<float>(total_loss / valid_count);
@@ -224,6 +228,7 @@ BaselineResult BaselineEvaluator::evaluate_trained_spark(MicroUnitNetwork& net, 
     }
 
     res.evaluated_steps = valid_count;
+    res.correct_steps = correct_count;
     if (valid_count > 0) {
         res.accuracy = static_cast<float>(correct_count) / static_cast<float>(valid_count);
         res.loss = static_cast<float>(total_loss / valid_count);

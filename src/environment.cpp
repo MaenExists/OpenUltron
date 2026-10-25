@@ -19,6 +19,12 @@ void TemporalMemoryEnv::reset() {
     generate_sequence();
 }
 
+void TemporalMemoryEnv::reset_to_initial_seed() {
+    rng_.reseed(seed_);
+    step_idx_ = 0;
+    generate_sequence();
+}
+
 void TemporalMemoryEnv::generate_sequence() {
     sequence_.resize(sequence_length_);
     for (uint32_t i = 0; i < sequence_length_; ++i) {

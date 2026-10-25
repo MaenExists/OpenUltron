@@ -12,6 +12,7 @@ namespace spark {
 struct EvalMetrics {
     float loss = 0.0f;
     float accuracy = 0.0f;
+    size_t correct_steps = 0;
     size_t evaluated_steps = 0;
 };
 
@@ -30,6 +31,8 @@ struct TrainSummary {
     float final_train_loss = 0.0f;
     float final_eval_loss = 0.0f;
     float final_eval_accuracy = 0.0f;
+    size_t final_eval_correct = 0;
+    size_t final_eval_total = 0;
     double total_seconds = 0.0;
     std::vector<TrainHistoryEntry> history;
 };

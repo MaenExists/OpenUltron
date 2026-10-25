@@ -125,23 +125,24 @@ void ExperimentRunner::compare_baselines(uint32_t delay, uint32_t units, uint64_
         res_trained
     };
 
-    std::cout << std::string(75, '-') << std::endl;
+    std::cout << std::string(80, '-') << std::endl;
     std::cout << std::left << std::setw(30) << "Model / Predictor"
               << std::right << std::setw(12) << "Accuracy"
               << std::setw(14) << "Eval Loss"
-              << std::setw(16) << "Evaluated Bits"
+              << std::setw(20) << "Correct / Total"
               << std::endl;
-    std::cout << std::string(75, '-') << std::endl;
+    std::cout << std::string(80, '-') << std::endl;
 
     for (const auto& r : results) {
+        std::string counts = std::to_string(r.correct_steps) + " / " + std::to_string(r.evaluated_steps);
         std::cout << std::left << std::setw(30) << r.name
                   << std::right << std::fixed << std::setprecision(2)
                   << std::setw(11) << (r.accuracy * 100.0f) << "%"
                   << std::setprecision(5) << std::setw(14) << r.loss
-                  << std::setw(16) << r.evaluated_steps
+                  << std::setw(20) << counts
                   << std::endl;
     }
-    std::cout << std::string(75, '-') << std::endl;
+    std::cout << std::string(80, '-') << std::endl;
 }
 
 std::vector<ExperimentRecord> ExperimentRunner::run_capacity_suite(

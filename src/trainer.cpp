@@ -54,6 +54,7 @@ EvalMetrics Trainer::evaluate(Environment& eval_env, uint32_t max_eval_steps) {
     net_.set_state(saved_state);
 
     metrics.evaluated_steps = valid_count;
+    metrics.correct_steps = correct_bits;
     if (valid_count > 0) {
         metrics.loss = static_cast<float>(total_loss / valid_count);
         metrics.accuracy = static_cast<float>(correct_bits) / static_cast<float>(valid_count);
@@ -104,6 +105,7 @@ TrainSummary Trainer::train(
         for (uint32_t t = 0; t < unroll_steps; ++t) {
             if (train_env_.is_done()) {
                 train_env_.reset();
+                net_.reset_state(); // Reset recurrent hidden state at episode boundary
             }
             window_obs.push_back(train_env_.get_observation());
             window_targets.push_back(train_env_.get_target());
@@ -175,6 +177,11 @@ TrainSummary Trainer::train(
         summary.final_train_loss = summary.history.back().train_loss;
         summary.final_eval_loss = summary.history.back().eval_loss;
         summary.final_eval_accuracy = summary.history.back().eval_accuracy;
+        if (eval_env_ != nullptr) {
+            EvalMetrics final_ev = evaluate(*eval_env_);
+            summary.final_eval_correct = final_ev.correct_steps;
+            summary.final_eval_total = final_ev.evaluated_steps;
+        }
     }
 
     return summary;

@@ -282,6 +282,7 @@ void run_train(int argc, char* argv[]) {
     uint32_t delay = 1;
     uint32_t units = 128;
     uint32_t fan_in = 8;
+    float beta = 0.5f;
     uint32_t steps = 1500;
     uint32_t unroll = 8;
     float lr = 0.03f;
@@ -296,6 +297,7 @@ void run_train(int argc, char* argv[]) {
         else if (arg == "--delay" && i + 1 < argc) delay = std::stoul(argv[++i]);
         else if (arg == "--units" && i + 1 < argc) units = std::stoul(argv[++i]);
         else if (arg == "--fan-in" && i + 1 < argc) fan_in = std::stoul(argv[++i]);
+        else if (arg == "--beta" && i + 1 < argc) beta = std::stof(argv[++i]);
         else if (arg == "--steps" && i + 1 < argc) steps = std::stoul(argv[++i]);
         else if (arg == "--unroll" && i + 1 < argc) unroll = std::stoul(argv[++i]);
         else if (arg == "--lr" && i + 1 < argc) lr = std::stof(argv[++i]);
@@ -335,7 +337,7 @@ void run_train(int argc, char* argv[]) {
     net_cfg.input_dim = 1;
     net_cfg.output_dim = 1;
     net_cfg.alpha = 0.8f;
-    net_cfg.beta = 0.5f;
+    net_cfg.beta = beta;
     net_cfg.seed = seed;
 
     spark::MicroUnitNetwork net(net_cfg, graph_cfg);
@@ -354,7 +356,8 @@ void run_train(int argc, char* argv[]) {
               << "  Final Train Loss     : " << summary.final_train_loss << "\n"
               << "  Final Eval Loss      : " << summary.final_eval_loss << "\n"
               << "  Final Eval Accuracy  : " << std::setprecision(2)
-              << (summary.final_eval_accuracy * 100.0f) << "%\n"
+              << (summary.final_eval_accuracy * 100.0f) << "% ("
+              << summary.final_eval_correct << " / " << summary.final_eval_total << " bits)\n"
               << "  Total Wall Time      : " << std::setprecision(2) << summary.total_seconds << " s\n"
               << "  Steps / Second       : " << (summary.steps_completed / summary.total_seconds) << " updates/s\n"
               << "--------------------------------------------------------\n"
