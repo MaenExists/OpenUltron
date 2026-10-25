@@ -1,3 +1,12 @@
+# C++ & CMake build artifacts
+build/
+CMakeFiles/
+CMakeCache.txt
+*.o
+*.a
+*.so
+*.spark
+
 # Rust build artifacts
 target/
 **/target/
@@ -15,3 +24,4 @@ target/
 .vscode/
 *.swp
 *.log
+
