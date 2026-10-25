@@ -14,7 +14,7 @@
 void print_banner() {
     std::cout << "========================================================\n"
               << "  OpenUltron :: SPARK (Sparse Predictive Adaptive Recurrent Kernel)\n"
-              << "  Version 0.3.0 (Phase 3: Scientific Validation & Memory Investigation)\n"
+              << "  Version 0.4.0 (Phase 4: Local Learning, Distributed Credit Assignment & Multi-Mode Comparison)\n"
               << "========================================================\n" << std::endl;
 }
 
@@ -44,6 +44,8 @@ void print_info() {
               << "  spark capacity [--seeds S] [--csv PATH]\n"
               << "  spark diagnose [--csv PATH]\n"
               << "  spark ablate [--delay D] [--units N] [--seed S]\n"
+              << "  spark phase4 [--seeds S] [--csv PATH]\n"
+              << "  spark local-ablate [--delay D] [--units N] [--seeds S] [--csv PATH]\n"
               << std::endl;
 }
 
@@ -424,6 +426,47 @@ void run_ablate_cmd(int argc, char* argv[]) {
     spark::ExperimentRunner::run_inference_ablations(delay, units, seed);
 }
 
+void run_phase4_cmd(int argc, char* argv[]) {
+    size_t num_seeds = 10;
+    std::string csv_path = "experiments/results/phase4_modes_comparison.csv";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--seeds" && i + 1 < argc) num_seeds = std::stoul(argv[++i]);
+        else if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    print_banner();
+    std::vector<uint32_t> delays = {1, 3, 5};
+    std::vector<uint32_t> unit_counts = {64, 128};
+    std::vector<spark::LearningAlgorithmMode> modes = {
+        spark::LearningAlgorithmMode::ExactTBPTT,
+        spark::LearningAlgorithmMode::LocalRandomFeedback,
+        spark::LearningAlgorithmMode::LocalReadoutTranspose,
+        spark::LearningAlgorithmMode::ReadoutOnly
+    };
+
+    spark::ExperimentRunner::run_phase4_suite(delays, unit_counts, modes, num_seeds, csv_path);
+}
+
+void run_local_ablate_cmd(int argc, char* argv[]) {
+    uint32_t delay = 1;
+    uint32_t units = 64;
+    size_t num_seeds = 5;
+    std::string csv_path = "experiments/results/phase4_ablations.csv";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--delay" && i + 1 < argc) delay = std::stoul(argv[++i]);
+        else if (arg == "--units" && i + 1 < argc) units = std::stoul(argv[++i]);
+        else if (arg == "--seeds" && i + 1 < argc) num_seeds = std::stoul(argv[++i]);
+        else if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    print_banner();
+    spark::ExperimentRunner::run_local_ablation_suite(delay, units, num_seeds, csv_path);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_info();
@@ -447,6 +490,10 @@ int main(int argc, char* argv[]) {
         run_diagnose_cmd(argc, argv);
     } else if (cmd == "ablate") {
         run_ablate_cmd(argc, argv);
+    } else if (cmd == "phase4") {
+        run_phase4_cmd(argc, argv);
+    } else if (cmd == "local-ablate") {
+        run_local_ablate_cmd(argc, argv);
     } else {
         std::cerr << "Unknown command: '" << cmd << "'\n"
                   << "Run 'spark info' for available commands." << std::endl;

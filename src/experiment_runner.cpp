@@ -11,13 +11,14 @@
 namespace spark {
 
 std::string ExperimentRecord::csv_header() {
-    return "run_id,task,delay,seed,units,fan_in,alpha,beta,unroll,learning_rate,train_steps,train_examples,eval_examples,train_loss,validation_loss,test_loss,test_accuracy,training_seconds,model_bytes";
+    return "run_id,task,mode_name,delay,seed,units,fan_in,alpha,beta,unroll,learning_rate,lambda,train_steps,train_examples,eval_examples,train_loss,validation_loss,test_loss,test_accuracy,training_seconds,model_bytes,training_memory_bytes";
 }
 
 std::string ExperimentRecord::to_csv() const {
     std::ostringstream ss;
     ss << run_id << ","
        << task << ","
+       << mode_name << ","
        << delay << ","
        << seed << ","
        << units << ","
@@ -26,6 +27,7 @@ std::string ExperimentRecord::to_csv() const {
        << beta << ","
        << unroll << ","
        << learning_rate << ","
+       << lambda << ","
        << train_steps << ","
        << train_examples << ","
        << eval_examples << ","
@@ -33,8 +35,9 @@ std::string ExperimentRecord::to_csv() const {
        << validation_loss << ","
        << test_loss << ","
        << std::setprecision(4) << test_accuracy << ","
-       << std::setprecision(2) << training_seconds << ","
-       << model_bytes;
+       << std::setprecision(4) << training_seconds << ","
+       << model_bytes << ","
+       << training_memory_bytes;
     return ss.str();
 }
 
@@ -44,6 +47,7 @@ AggregatedStats ExperimentRunner::compute_aggregate(const std::vector<Experiment
     stats.num_runs = records.size();
     if (records.empty()) return stats;
 
+    stats.mode_name = records[0].mode_name;
     stats.delay = records[0].delay;
     stats.units = records[0].units;
     stats.min_accuracy = records[0].test_accuracy;
@@ -52,11 +56,13 @@ AggregatedStats ExperimentRunner::compute_aggregate(const std::vector<Experiment
     double acc_sum = 0.0;
     double loss_sum = 0.0;
     double time_sum = 0.0;
+    double mem_sum = 0.0;
 
     for (const auto& r : records) {
         acc_sum += r.test_accuracy;
         loss_sum += r.test_loss;
         time_sum += r.training_seconds;
+        mem_sum += static_cast<double>(r.training_memory_bytes) / 1024.0;
         if (r.test_accuracy < stats.min_accuracy) stats.min_accuracy = r.test_accuracy;
         if (r.test_accuracy > stats.max_accuracy) stats.max_accuracy = r.test_accuracy;
     }
@@ -64,6 +70,7 @@ AggregatedStats ExperimentRunner::compute_aggregate(const std::vector<Experiment
     stats.mean_accuracy = acc_sum / stats.num_runs;
     stats.mean_eval_loss = loss_sum / stats.num_runs;
     stats.mean_train_time = time_sum / stats.num_runs;
+    stats.mean_training_memory_kb = mem_sum / stats.num_runs;
 
     double acc_var = 0.0;
     for (const auto& r : records) {
@@ -521,6 +528,346 @@ void ExperimentRunner::run_inference_ablations(uint32_t delay, uint32_t units, u
     }
 
     std::cout << std::string(75, '-') << std::endl;
+}
+
+std::vector<ExperimentRecord> ExperimentRunner::run_phase4_suite(
+    const std::vector<uint32_t>& delays,
+    const std::vector<uint32_t>& unit_counts,
+    const std::vector<LearningAlgorithmMode>& modes,
+    size_t num_seeds,
+    const std::string& csv_path
+) {
+    std::vector<ExperimentRecord> all_records;
+    std::vector<AggregatedStats> all_stats;
+
+    std::cout << "\n================================================================================"
+              << "\n  SPARK Phase 4: Multi-Mode Learning Comparison (" << num_seeds << " seeds/config)"
+              << "\n================================================================================\n" << std::endl;
+
+    const uint32_t total_budget_bits = 12000;
+    const uint32_t eval_bits = 10000;
+
+    for (auto mode : modes) {
+        std::string mode_str = learning_algorithm_name(mode);
+
+        for (uint32_t delay : delays) {
+            for (uint32_t units : unit_counts) {
+                std::vector<ExperimentRecord> config_records;
+                std::string config_name = mode_str + " (D=" + std::to_string(delay) + ", N=" + std::to_string(units) + ")";
+                std::cout << "Testing: " << std::left << std::setw(38) << config_name
+                          << " across " << num_seeds << " seeds..." << std::flush;
+
+                for (size_t s_idx = 0; s_idx < num_seeds; ++s_idx) {
+                    uint64_t seed = 42ULL + s_idx * 17ULL;
+
+                    SparseGraphConfig g_cfg;
+                    g_cfg.num_units = units;
+                    g_cfg.fan_in = 8;
+                    g_cfg.seed = seed;
+
+                    NetworkConfig n_cfg;
+                    n_cfg.num_units = units;
+                    n_cfg.input_dim = 1;
+                    n_cfg.output_dim = 1;
+                    n_cfg.alpha = 0.8f;
+                    n_cfg.beta = 1.2f;
+                    n_cfg.seed = seed;
+
+                    MicroUnitNetwork net(n_cfg, g_cfg);
+
+                    TemporalMemoryEnv train_env(delay, 200, seed);
+                    TemporalMemoryEnv eval_env(delay, eval_bits + delay, seed + 100000ULL);
+
+                    ExperimentRecord rec;
+                    rec.run_id = "p4_" + mode_str + "_d" + std::to_string(delay) + "_u" + std::to_string(units) + "_s" + std::to_string(seed);
+                    rec.task = "delay-copy";
+                    rec.mode_name = mode_str;
+                    rec.delay = delay;
+                    rec.seed = seed;
+                    rec.units = units;
+                    rec.fan_in = 8;
+                    rec.alpha = 0.8f;
+                    rec.beta = 1.2f;
+                    rec.train_examples = total_budget_bits;
+                    rec.learning_rate = 0.03f;
+                    rec.lambda = 0.8f;
+                    rec.model_bytes = net.memory_bytes();
+
+                    if (mode == LearningAlgorithmMode::ExactTBPTT) {
+                        uint32_t unroll = 8;
+                        uint32_t steps = total_budget_bits / unroll;
+                        rec.unroll = unroll;
+                        rec.train_steps = steps;
+
+                        Trainer trainer(net, train_env, nullptr, 0.03f, 1.0f);
+                        TrainSummary summary = trainer.train(steps, unroll, 0, true);
+
+                        EvalMetrics ev = trainer.evaluate(eval_env, eval_env.sequence_length());
+                        rec.eval_examples = ev.evaluated_steps;
+                        rec.train_loss = summary.final_train_loss;
+                        rec.validation_loss = summary.final_eval_loss;
+                        rec.test_loss = ev.loss;
+                        rec.test_accuracy = ev.accuracy;
+                        rec.training_seconds = summary.total_seconds;
+
+                        size_t grads_bytes = sizeof(Gradients) +
+                            (net.graph().weights.size() + net.input_weights().size() +
+                             net.biases().size() + net.output_weights().size() +
+                             net.output_biases().size()) * sizeof(float);
+                        size_t unroll_bytes = unroll * (sizeof(StepRecord) + units * 4 * sizeof(float));
+                        rec.training_memory_bytes = net.memory_bytes() + grads_bytes + unroll_bytes;
+                    } else {
+                        rec.unroll = 1;
+                        rec.train_steps = total_budget_bits;
+
+                        LocalLearningConfig l_cfg;
+                        l_cfg.lr = 0.03f;
+                        l_cfg.lambda = 0.8f;
+                        l_cfg.feedback_scale = 1.0f;
+                        l_cfg.feedback_seed = seed + 50000ULL;
+
+                        if (mode == LearningAlgorithmMode::LocalRandomFeedback) {
+                            l_cfg.feedback_mode = FeedbackMode::RandomFeedback;
+                            l_cfg.train_recurrent = true;
+                            l_cfg.train_input = true;
+                            l_cfg.train_readout = true;
+                        } else if (mode == LearningAlgorithmMode::LocalReadoutTranspose) {
+                            l_cfg.feedback_mode = FeedbackMode::ReadoutTranspose;
+                            l_cfg.train_recurrent = true;
+                            l_cfg.train_input = true;
+                            l_cfg.train_readout = true;
+                        } else { // ReadoutOnly
+                            l_cfg.feedback_mode = FeedbackMode::ReadoutTranspose;
+                            l_cfg.train_recurrent = false;
+                            l_cfg.train_input = false;
+                            l_cfg.train_readout = true;
+                        }
+
+                        LocalLearner learner(net, l_cfg);
+                        TrainSummary summary = learner.train(train_env, nullptr, total_budget_bits, 0, true);
+
+                        Trainer eval_runner(net, train_env);
+                        EvalMetrics ev = eval_runner.evaluate(eval_env, eval_env.sequence_length());
+
+                        rec.eval_examples = ev.evaluated_steps;
+                        rec.train_loss = summary.final_train_loss;
+                        rec.validation_loss = summary.final_eval_loss;
+                        rec.test_loss = ev.loss;
+                        rec.test_accuracy = ev.accuracy;
+                        rec.training_seconds = summary.total_seconds;
+                        rec.training_memory_bytes = net.memory_bytes() + learner.training_memory_bytes();
+                    }
+
+                    config_records.push_back(rec);
+                    all_records.push_back(rec);
+                }
+
+                auto agg = compute_aggregate(config_records, config_name);
+                all_stats.push_back(agg);
+
+                std::cout << " done! Mean Acc: " << std::fixed << std::setprecision(2)
+                          << (agg.mean_accuracy * 100.0) << "% (+/- " << (agg.std_accuracy * 100.0)
+                          << "%), Time: " << std::setprecision(2) << agg.mean_train_time << "s\n";
+            }
+        }
+    }
+
+    std::cout << "\n" << std::string(115, '=') << "\n"
+              << "  PHASE 4 MULTI-MODE AGGREGATE RESULTS\n"
+              << std::string(115, '=') << "\n";
+    std::cout << std::left << std::setw(36) << "Configuration"
+              << std::right << std::setw(6) << "Runs"
+              << std::setw(12) << "Mean Acc"
+              << std::setw(11) << "Std Acc"
+              << std::setw(11) << "Min Acc"
+              << std::setw(11) << "Max Acc"
+              << std::setw(13) << "Mean Loss"
+              << std::setw(11) << "Time (s)"
+              << std::setw(11) << "Mem (KB)"
+              << "\n" << std::string(115, '-') << "\n";
+
+    for (const auto& a : all_stats) {
+        std::cout << std::left << std::setw(36) << a.config_name
+                  << std::right << std::setw(6) << a.num_runs
+                  << std::fixed << std::setprecision(2)
+                  << std::setw(11) << (a.mean_accuracy * 100.0) << "%"
+                  << std::setw(10) << (a.std_accuracy * 100.0) << "%"
+                  << std::setw(10) << (a.min_accuracy * 100.0) << "%"
+                  << std::setw(10) << (a.max_accuracy * 100.0) << "%"
+                  << std::setprecision(4) << std::setw(13) << a.mean_eval_loss
+                  << std::setprecision(3) << std::setw(11) << a.mean_train_time
+                  << std::setprecision(1) << std::setw(11) << a.mean_training_memory_kb
+                  << std::endl;
+    }
+    std::cout << std::string(115, '=') << std::endl;
+
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << ExperimentRecord::csv_header() << "\n";
+            for (const auto& r : all_records) {
+                ofs << r.to_csv() << "\n";
+            }
+            std::cout << "Exported " << all_records.size() << " experimental runs to " << csv_path << std::endl;
+        }
+    }
+
+    return all_records;
+}
+
+std::vector<ExperimentRecord> ExperimentRunner::run_local_ablation_suite(
+    uint32_t delay,
+    uint32_t units,
+    size_t num_seeds,
+    const std::string& csv_path
+) {
+    struct AblationConfig {
+        std::string name;
+        FeedbackMode feedback_mode;
+        bool train_recurrent;
+        bool train_input;
+        bool train_readout;
+        float lambda;
+    };
+
+    std::vector<AblationConfig> ablations = {
+        {"1. Intact Local (Mode C)", FeedbackMode::ReadoutTranspose, true, true, true, 0.8f},
+        {"2. Freeze Recurrent W", FeedbackMode::ReadoutTranspose, false, true, true, 0.8f},
+        {"3. Freeze Input Proj U", FeedbackMode::ReadoutTranspose, true, false, true, 0.8f},
+        {"4. No Traces (lambda=0)", FeedbackMode::ReadoutTranspose, true, true, true, 0.0f},
+        {"5. Readout Only (Mode D)", FeedbackMode::ReadoutTranspose, false, false, true, 0.8f},
+        {"6. Random Feedback (Mode B)", FeedbackMode::RandomFeedback, true, true, true, 0.8f}
+    };
+
+    std::vector<ExperimentRecord> all_records;
+    std::vector<AggregatedStats> all_stats;
+
+    std::cout << "\n================================================================================"
+              << "\n  SPARK Phase 4: Local Representation & Freezing Ablations"
+              << "\n  (Delay=" << delay << ", Units=" << units << ", " << num_seeds << " seeds/condition)"
+              << "\n================================================================================\n" << std::endl;
+
+    const uint32_t total_budget_bits = 12000;
+    const uint32_t eval_bits = 10000;
+
+    for (const auto& ab : ablations) {
+        std::vector<ExperimentRecord> cond_records;
+        std::cout << "Testing: " << std::left << std::setw(32) << ab.name
+                  << " across " << num_seeds << " seeds..." << std::flush;
+
+        for (size_t s_idx = 0; s_idx < num_seeds; ++s_idx) {
+            uint64_t seed = 42ULL + s_idx * 17ULL;
+
+            SparseGraphConfig g_cfg;
+            g_cfg.num_units = units;
+            g_cfg.fan_in = 8;
+            g_cfg.seed = seed;
+
+            NetworkConfig n_cfg;
+            n_cfg.num_units = units;
+            n_cfg.input_dim = 1;
+            n_cfg.output_dim = 1;
+            n_cfg.alpha = 0.8f;
+            n_cfg.beta = 1.2f;
+            n_cfg.seed = seed;
+
+            MicroUnitNetwork net(n_cfg, g_cfg);
+
+            TemporalMemoryEnv train_env(delay, 200, seed);
+            TemporalMemoryEnv eval_env(delay, eval_bits + delay, seed + 100000ULL);
+
+            LocalLearningConfig l_cfg;
+            l_cfg.lr = 0.03f;
+            l_cfg.lambda = ab.lambda;
+            l_cfg.feedback_mode = ab.feedback_mode;
+            l_cfg.feedback_scale = 1.0f;
+            l_cfg.feedback_seed = seed + 50000ULL;
+            l_cfg.train_recurrent = ab.train_recurrent;
+            l_cfg.train_input = ab.train_input;
+            l_cfg.train_readout = ab.train_readout;
+
+            LocalLearner learner(net, l_cfg);
+            TrainSummary summary = learner.train(train_env, nullptr, total_budget_bits, 0, true);
+
+            Trainer eval_runner(net, train_env);
+            EvalMetrics ev = eval_runner.evaluate(eval_env, eval_env.sequence_length());
+
+            ExperimentRecord rec;
+            rec.run_id = "ablate_" + ab.name + "_s" + std::to_string(seed);
+            rec.task = "delay-copy";
+            rec.mode_name = ab.name;
+            rec.delay = delay;
+            rec.seed = seed;
+            rec.units = units;
+            rec.fan_in = 8;
+            rec.alpha = 0.8f;
+            rec.beta = 1.2f;
+            rec.unroll = 1;
+            rec.learning_rate = 0.03f;
+            rec.lambda = ab.lambda;
+            rec.train_steps = total_budget_bits;
+            rec.train_examples = total_budget_bits;
+            rec.eval_examples = ev.evaluated_steps;
+            rec.train_loss = summary.final_train_loss;
+            rec.validation_loss = summary.final_eval_loss;
+            rec.test_loss = ev.loss;
+            rec.test_accuracy = ev.accuracy;
+            rec.training_seconds = summary.total_seconds;
+            rec.model_bytes = net.memory_bytes();
+            rec.training_memory_bytes = net.memory_bytes() + learner.training_memory_bytes();
+
+            cond_records.push_back(rec);
+            all_records.push_back(rec);
+        }
+
+        auto agg = compute_aggregate(cond_records, ab.name);
+        all_stats.push_back(agg);
+
+        std::cout << " done! Mean Acc: " << std::fixed << std::setprecision(2)
+                  << (agg.mean_accuracy * 100.0) << "% (+/- " << (agg.std_accuracy * 100.0) << "%)\n";
+    }
+
+    std::cout << "\n" << std::string(115, '=') << "\n"
+              << "  PHASE 4 LOCAL ABLATIONS AGGREGATE RESULTS\n"
+              << std::string(115, '=') << "\n";
+    std::cout << std::left << std::setw(32) << "Ablation Condition"
+              << std::right << std::setw(6) << "Runs"
+              << std::setw(12) << "Mean Acc"
+              << std::setw(11) << "Std Acc"
+              << std::setw(11) << "Min Acc"
+              << std::setw(11) << "Max Acc"
+              << std::setw(13) << "Mean Loss"
+              << std::setw(11) << "Time (s)"
+              << std::setw(11) << "Mem (KB)"
+              << "\n" << std::string(115, '-') << "\n";
+
+    for (const auto& a : all_stats) {
+        std::cout << std::left << std::setw(32) << a.config_name
+                  << std::right << std::setw(6) << a.num_runs
+                  << std::fixed << std::setprecision(2)
+                  << std::setw(11) << (a.mean_accuracy * 100.0) << "%"
+                  << std::setw(10) << (a.std_accuracy * 100.0) << "%"
+                  << std::setw(10) << (a.min_accuracy * 100.0) << "%"
+                  << std::setw(10) << (a.max_accuracy * 100.0) << "%"
+                  << std::setprecision(4) << std::setw(13) << a.mean_eval_loss
+                  << std::setprecision(3) << std::setw(11) << a.mean_train_time
+                  << std::setprecision(1) << std::setw(11) << a.mean_training_memory_kb
+                  << std::endl;
+    }
+    std::cout << std::string(115, '=') << std::endl;
+
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << ExperimentRecord::csv_header() << "\n";
+            for (const auto& r : all_records) {
+                ofs << r.to_csv() << "\n";
+            }
+            std::cout << "Exported " << all_records.size() << " experimental runs to " << csv_path << std::endl;
+        }
+    }
+
+    return all_records;
 }
 
 } // namespace spark

@@ -71,5 +71,32 @@ Data exported to `experiments/results/delay3_diagnostic.csv`:
 - Zero Recurrent Weights ($W=0$): Drops accuracy to $51.76\%$ ($D=1$) and $52.79\%$ ($D=3$).
 - Confirmed: Temporal retention is stored strictly within learned recurrent dynamics.
 
+## Phase 4 Experiments (Local Learning & Multi-Mode Comparison)
+
+### Multi-Mode Comparison (240 Seeded Runs across Delays 1, 3, 5; N in {64, 128})
+Data exported to `experiments/results/phase4_modes_comparison.csv` (10 seeds/config, 10,000 valid bits/seed):
+
+| Mode | Delay 1 (N=64) | Delay 1 (N=128) | Delay 3 (N=64) | Delay 3 (N=128) | Delay 5 (N=64) | Delay 5 (N=128) | Memory (64u / 128u) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Mode A (Exact TBPTT)** | **100.00%** | **100.00%** | **88.81%** | **84.93%** | **77.67%** | **74.47%** | 18.4 KB / 34.9 KB |
+| **Mode B (Random Feedback)** | 86.83% | 86.58% | 71.75% | 71.80% | 67.18% | 66.20% | **9.5 KB / 18.3 KB** |
+| **Mode C (Readout Transpose)**| 86.92% | 83.24% | 71.39% | 70.24% | 66.40% | 65.19% | **9.5 KB / 18.3 KB** |
+| **Mode D (Readout Only)** | 77.92% | 76.02% | 67.58% | 66.07% | 63.64% | 62.81% | **9.5 KB / 18.3 KB** |
+
+### Local Representation & Freezing Ablations (Delay 1, N=64, 10 Seeds)
+Data exported to `experiments/results/phase4_ablations.csv` (10,000 test bits/seed):
+- **1. Intact Local (Mode C)**: $86.92\% \pm 4.55\%$ (Loss: $0.3106$)
+- **2. Freeze Recurrent W**: $77.69\% \pm 2.00\%$ (Loss: $0.4583$) — **$\Delta = -9.23\%$**
+- **3. Freeze Input Proj U**: $84.17\% \pm 2.12\%$ (Loss: $0.3668$) — **$\Delta = -2.75\%$**
+- **4. No Traces ($\lambda = 0$)**: $69.52\% \pm 7.76\%$ (Loss: $0.5606$) — **$\Delta = -17.40\%$**
+- **5. Readout Only (Mode D)**: $77.92\% \pm 6.23\%$ (Loss: $0.4632$) — **$\Delta = -9.00\%$**
+- **6. Random Feedback (Mode B)**: $86.83\% \pm 3.83\%$ (Loss: $0.2994$) — **$\Delta = -0.09\%$**
+
+### Key Takeaways
+1. **Recurrent Representation Adaptation**: Recurrent updates in local learning provide a statistically significant $+9.23\%$ improvement over freezing the recurrent reservoir.
+2. **Trace Accumulation**: Eligibility traces are strictly required ($\lambda=0$ collapses performance by $-17.40\%$).
+3. **Memory Savings**: Local learning reduces training memory overhead by $\sim 48\%$ while delivering online learning without unroll window buffers.
+
+
 
 

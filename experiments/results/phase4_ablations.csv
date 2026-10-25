@@ -1,0 +1,61 @@
+run_id,task,mode_name,delay,seed,units,fan_in,alpha,beta,unroll,learning_rate,lambda,train_steps,train_examples,eval_examples,train_loss,validation_loss,test_loss,test_accuracy,training_seconds,model_bytes,training_memory_bytes
+ablate_1. Intact Local (Mode C)_s42,delay-copy,1. Intact Local (Mode C),1,42,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.51991,0.00000,0.41775,0.8094,0.0793,6320,9756
+ablate_1. Intact Local (Mode C)_s59,delay-copy,1. Intact Local (Mode C),1,59,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.50178,0.00000,0.31833,0.8432,0.0802,6320,9756
+ablate_1. Intact Local (Mode C)_s76,delay-copy,1. Intact Local (Mode C),1,76,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.42823,0.00000,0.17921,0.9596,0.0780,6320,9756
+ablate_1. Intact Local (Mode C)_s93,delay-copy,1. Intact Local (Mode C),1,93,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.48589,0.00000,0.29138,0.8837,0.0750,6320,9756
+ablate_1. Intact Local (Mode C)_s110,delay-copy,1. Intact Local (Mode C),1,110,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.50637,0.00000,0.24939,0.9211,0.0717,6320,9756
+ablate_1. Intact Local (Mode C)_s127,delay-copy,1. Intact Local (Mode C),1,127,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.51364,0.00000,0.35735,0.8409,0.0713,6320,9756
+ablate_1. Intact Local (Mode C)_s144,delay-copy,1. Intact Local (Mode C),1,144,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.45361,0.00000,0.26009,0.8895,0.0763,6320,9756
+ablate_1. Intact Local (Mode C)_s161,delay-copy,1. Intact Local (Mode C),1,161,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.53636,0.00000,0.36512,0.8363,0.0705,6320,9756
+ablate_1. Intact Local (Mode C)_s178,delay-copy,1. Intact Local (Mode C),1,178,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.48165,0.00000,0.26655,0.8900,0.0725,6320,9756
+ablate_1. Intact Local (Mode C)_s195,delay-copy,1. Intact Local (Mode C),1,195,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.53705,0.00000,0.40105,0.8179,0.0745,6320,9756
+ablate_2. Freeze Recurrent W_s42,delay-copy,2. Freeze Recurrent W,1,42,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.59050,0.00000,0.49200,0.7532,0.0692,6320,9756
+ablate_2. Freeze Recurrent W_s59,delay-copy,2. Freeze Recurrent W,1,59,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.54176,0.00000,0.44499,0.7807,0.0681,6320,9756
+ablate_2. Freeze Recurrent W_s76,delay-copy,2. Freeze Recurrent W,1,76,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.56344,0.00000,0.45015,0.7818,0.0634,6320,9756
+ablate_2. Freeze Recurrent W_s93,delay-copy,2. Freeze Recurrent W,1,93,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.54237,0.00000,0.44086,0.7965,0.0627,6320,9756
+ablate_2. Freeze Recurrent W_s110,delay-copy,2. Freeze Recurrent W,1,110,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.57091,0.00000,0.46373,0.7768,0.0661,6320,9756
+ablate_2. Freeze Recurrent W_s127,delay-copy,2. Freeze Recurrent W,1,127,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.58306,0.00000,0.45778,0.7780,0.0633,6320,9756
+ablate_2. Freeze Recurrent W_s144,delay-copy,2. Freeze Recurrent W,1,144,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.54871,0.00000,0.42507,0.8091,0.0667,6320,9756
+ablate_2. Freeze Recurrent W_s161,delay-copy,2. Freeze Recurrent W,1,161,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.59665,0.00000,0.50638,0.7327,0.0645,6320,9756
+ablate_2. Freeze Recurrent W_s178,delay-copy,2. Freeze Recurrent W,1,178,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.55395,0.00000,0.44969,0.7790,0.0655,6320,9756
+ablate_2. Freeze Recurrent W_s195,delay-copy,2. Freeze Recurrent W,1,195,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.57974,0.00000,0.45236,0.7813,0.0657,6320,9756
+ablate_3. Freeze Input Proj U_s42,delay-copy,3. Freeze Input Proj U,1,42,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.49675,0.00000,0.33119,0.8579,0.0728,6320,9756
+ablate_3. Freeze Input Proj U_s59,delay-copy,3. Freeze Input Proj U,1,59,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.53300,0.00000,0.36571,0.8418,0.0866,6320,9756
+ablate_3. Freeze Input Proj U_s76,delay-copy,3. Freeze Input Proj U,1,76,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.48163,0.00000,0.36202,0.8367,0.0679,6320,9756
+ablate_3. Freeze Input Proj U_s93,delay-copy,3. Freeze Input Proj U,1,93,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.45552,0.00000,0.36389,0.8405,0.0672,6320,9756
+ablate_3. Freeze Input Proj U_s110,delay-copy,3. Freeze Input Proj U,1,110,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.51823,0.00000,0.37169,0.8398,0.0682,6320,9756
+ablate_3. Freeze Input Proj U_s127,delay-copy,3. Freeze Input Proj U,1,127,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.52933,0.00000,0.35898,0.8548,0.0672,6320,9756
+ablate_3. Freeze Input Proj U_s144,delay-copy,3. Freeze Input Proj U,1,144,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.45764,0.00000,0.28724,0.8847,0.0651,6320,9756
+ablate_3. Freeze Input Proj U_s161,delay-copy,3. Freeze Input Proj U,1,161,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.55930,0.00000,0.45155,0.7971,0.0637,6320,9756
+ablate_3. Freeze Input Proj U_s178,delay-copy,3. Freeze Input Proj U,1,178,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.50457,0.00000,0.38545,0.8333,0.0640,6320,9756
+ablate_3. Freeze Input Proj U_s195,delay-copy,3. Freeze Input Proj U,1,195,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.52434,0.00000,0.39025,0.8302,0.0657,6320,9756
+ablate_4. No Traces (lambda=0)_s42,delay-copy,4. No Traces (lambda=0),1,42,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.51700,0.00000,0.33139,0.8616,0.0712,6320,9756
+ablate_4. No Traces (lambda=0)_s59,delay-copy,4. No Traces (lambda=0),1,59,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.67342,0.00000,0.57820,0.6905,0.0681,6320,9756
+ablate_4. No Traces (lambda=0)_s76,delay-copy,4. No Traces (lambda=0),1,76,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.51116,0.00000,0.66855,0.6667,0.0679,6320,9756
+ablate_4. No Traces (lambda=0)_s93,delay-copy,4. No Traces (lambda=0),1,93,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.55605,0.00000,0.58177,0.7011,0.0671,6320,9756
+ablate_4. No Traces (lambda=0)_s110,delay-copy,4. No Traces (lambda=0),1,110,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.64426,0.00000,0.55358,0.6978,0.0690,6320,9756
+ablate_4. No Traces (lambda=0)_s127,delay-copy,4. No Traces (lambda=0),1,127,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.67896,0.00000,0.53585,0.7997,0.0675,6320,9756
+ablate_4. No Traces (lambda=0)_s144,delay-copy,4. No Traces (lambda=0),1,144,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.64145,0.00000,0.57773,0.6085,0.0688,6320,9756
+ablate_4. No Traces (lambda=0)_s161,delay-copy,4. No Traces (lambda=0),1,161,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.61213,0.00000,0.58066,0.6817,0.0679,6320,9756
+ablate_4. No Traces (lambda=0)_s178,delay-copy,4. No Traces (lambda=0),1,178,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.59324,0.00000,0.58687,0.6568,0.0680,6320,9756
+ablate_4. No Traces (lambda=0)_s195,delay-copy,4. No Traces (lambda=0),1,195,64,8,0.8,1.2,1,0.03,0,12000,12000,10000,0.67867,0.00000,0.61124,0.5879,0.0695,6320,9756
+ablate_5. Readout Only (Mode D)_s42,delay-copy,5. Readout Only (Mode D),1,42,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.55623,0.00000,0.50960,0.8234,0.0588,6320,9756
+ablate_5. Readout Only (Mode D)_s59,delay-copy,5. Readout Only (Mode D),1,59,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.53535,0.00000,0.41085,0.8153,0.0574,6320,9756
+ablate_5. Readout Only (Mode D)_s76,delay-copy,5. Readout Only (Mode D),1,76,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.52072,0.00000,0.45621,0.7755,0.0566,6320,9756
+ablate_5. Readout Only (Mode D)_s93,delay-copy,5. Readout Only (Mode D),1,93,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.54308,0.00000,0.43030,0.8065,0.0578,6320,9756
+ablate_5. Readout Only (Mode D)_s110,delay-copy,5. Readout Only (Mode D),1,110,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.57628,0.00000,0.48602,0.7595,0.0570,6320,9756
+ablate_5. Readout Only (Mode D)_s127,delay-copy,5. Readout Only (Mode D),1,127,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.59636,0.00000,0.49266,0.7436,0.0593,6320,9756
+ablate_5. Readout Only (Mode D)_s144,delay-copy,5. Readout Only (Mode D),1,144,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.50400,0.00000,0.37977,0.8313,0.0580,6320,9756
+ablate_5. Readout Only (Mode D)_s161,delay-copy,5. Readout Only (Mode D),1,161,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.56975,0.00000,0.63910,0.6119,0.0583,6320,9756
+ablate_5. Readout Only (Mode D)_s178,delay-copy,5. Readout Only (Mode D),1,178,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.51775,0.00000,0.38985,0.8239,0.0576,6320,9756
+ablate_5. Readout Only (Mode D)_s195,delay-copy,5. Readout Only (Mode D),1,195,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.57107,0.00000,0.43754,0.8011,0.0578,6320,9756
+ablate_6. Random Feedback (Mode B)_s42,delay-copy,6. Random Feedback (Mode B),1,42,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.42753,0.00000,0.27329,0.8827,0.0695,6320,9756
+ablate_6. Random Feedback (Mode B)_s59,delay-copy,6. Random Feedback (Mode B),1,59,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.49781,0.00000,0.42756,0.7884,0.0683,6320,9756
+ablate_6. Random Feedback (Mode B)_s76,delay-copy,6. Random Feedback (Mode B),1,76,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.44697,0.00000,0.27448,0.8857,0.0695,6320,9756
+ablate_6. Random Feedback (Mode B)_s93,delay-copy,6. Random Feedback (Mode B),1,93,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.47487,0.00000,0.37114,0.8240,0.0687,6320,9756
+ablate_6. Random Feedback (Mode B)_s110,delay-copy,6. Random Feedback (Mode B),1,110,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.45734,0.00000,0.29541,0.8702,0.0698,6320,9756
+ablate_6. Random Feedback (Mode B)_s127,delay-copy,6. Random Feedback (Mode B),1,127,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.43613,0.00000,0.25958,0.8820,0.0764,6320,9756
+ablate_6. Random Feedback (Mode B)_s144,delay-copy,6. Random Feedback (Mode B),1,144,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.48061,0.00000,0.34036,0.8358,0.0680,6320,9756
+ablate_6. Random Feedback (Mode B)_s161,delay-copy,6. Random Feedback (Mode B),1,161,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.43608,0.00000,0.25929,0.8875,0.0691,6320,9756
+ablate_6. Random Feedback (Mode B)_s178,delay-copy,6. Random Feedback (Mode B),1,178,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.42440,0.00000,0.23727,0.9193,0.0677,6320,9756
+ablate_6. Random Feedback (Mode B)_s195,delay-copy,6. Random Feedback (Mode B),1,195,64,8,0.8,1.2,1,0.03,0.8,12000,12000,10000,0.41723,0.00000,0.25589,0.9078,0.0710,6320,9756

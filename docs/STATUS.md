@@ -38,12 +38,18 @@
   - Automated regression suite (`test_baselines`, `test_regression`) passing 100%.
   - Produced `docs/PHASE3_FINDINGS.md` and CSV export registries.
 
-## In Progress
-- **Phase 4: Local Learning & Eligibility Traces**
+- **Phase 4: Local Learning & Multi-Mode Comparison** (Completed: 2026-10-25)
+  - Resolved Step 0 audit discrepancies (143/197 reporting breakdown, Jacobian singular value analysis, 10,000-bit test sequences).
+  - Implemented CSR-aligned local `EligibilityTraces` ($E_{ij}, E^U_{id}, E^b_i$) with decay $\lambda$.
+  - Implemented `FeedbackProjection` supporting Mode B (Random Feedback matrix $B$) and Mode C (Readout Transpose $V^T$).
+  - Implemented `LocalLearner` with exact direct readout gradient and local recurrent/input/bias updates.
+  - Benchmarked Modes A, B, C, D across Delays 1, 3, 5 for $N \in \{64, 128\}$ across 240 runs with 10 seeds each.
+  - Performed representation freezing ablations confirming active recurrent adaptation ($+9.23\%$) and trace criticality ($-17.40\%$ without traces).
+  - Verified ~48% training memory reduction of local learning vs TBPTT (9.5 KB vs 18.4 KB).
+  - Automated tests passing 100% (`test_local_learning`, all 7 CTest suites passing).
+  - Produced comprehensive scientific report `docs/PHASE4_FINDINGS.md` and CSV registries.
 
 ## Pending Phases
-- Phase 4: Local Learning & Eligibility Traces
-- Phase 5: World-Model Experiments
 - Phase 5: World-Model Experiments
 - Phase 6: Iterative Internal Computation
 - Phase 7: Adaptive Topology

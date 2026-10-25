@@ -31,6 +31,7 @@ set(SPARK_CORE_SOURCES
     src/trainer.cpp
     src/baselines.cpp
     src/experiment_runner.cpp
+    src/local_learning.cpp
 )
 
 add_library(spark_core STATIC ${SPARK_CORE_SOURCES})
@@ -72,3 +73,7 @@ add_test(NAME test_baselines COMMAND test_baselines)
 add_executable(test_regression tests/test_regression.cpp)
 target_link_libraries(test_regression PRIVATE spark_core)
 add_test(NAME test_regression COMMAND test_regression)
+
+add_executable(test_local_learning tests/test_local_learning.cpp)
+target_link_libraries(test_local_learning PRIVATE spark_core)
+add_test(NAME test_local_learning COMMAND test_local_learning)

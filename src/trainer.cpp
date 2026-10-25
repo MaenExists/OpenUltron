@@ -132,7 +132,7 @@ TrainSummary Trainer::train(
         optimizer.step(grads);
 
         // Evaluation
-        if (s % eval_interval == 0 || s == total_steps) {
+        if ((eval_interval > 0 && s % eval_interval == 0) || s == total_steps) {
             float avg_train_loss = static_cast<float>(running_loss / window_count);
             float ev_loss = 0.0f;
             float ev_acc = 0.0f;
