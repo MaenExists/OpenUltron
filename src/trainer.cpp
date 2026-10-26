@@ -3,6 +3,7 @@
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <algorithm>
 
 namespace spark {
 
@@ -29,22 +30,33 @@ EvalMetrics Trainer::evaluate(Environment& eval_env, uint32_t max_eval_steps) {
     std::vector<float> logits, probs;
     double total_loss = 0.0;
     size_t valid_count = 0;
-    size_t correct_bits = 0;
+    size_t correct_steps = 0;
+
+    ReadoutMode r_mode = (loss_type_ == LossType::CategoricalCrossEntropy) ? ReadoutMode::Softmax : ReadoutMode::Sigmoid;
 
     for (uint32_t s = 0; s < max_eval_steps && !eval_env.is_done(); ++s) {
         Observation obs = eval_env.get_observation();
         Target target = eval_env.get_target();
 
-        net_.forward_step(obs.values, logits, probs, ReadoutMode::Sigmoid);
+        net_.forward_step(obs.values, logits, probs, r_mode);
         eval_env.step();
 
         if (target.valid) {
             valid_count++;
-            for (size_t k = 0; k < logits.size(); ++k) {
-                total_loss += TBPTTTrainer::bce_loss(logits[k], target.values[k]);
-                float pred_bit = (probs[k] >= 0.5f) ? 1.0f : 0.0f;
-                if (std::abs(pred_bit - target.values[k]) < 1e-3f) {
-                    correct_bits++;
+            if (loss_type_ == LossType::CategoricalCrossEntropy) {
+                total_loss += TBPTTTrainer::categorical_ce_loss(logits, target.values);
+                uint32_t pred_class = static_cast<uint32_t>(std::distance(probs.begin(), std::max_element(probs.begin(), probs.end())));
+                uint32_t true_class = static_cast<uint32_t>(std::distance(target.values.begin(), std::max_element(target.values.begin(), target.values.end())));
+                if (pred_class == true_class) {
+                    correct_steps++;
+                }
+            } else {
+                for (size_t k = 0; k < logits.size(); ++k) {
+                    total_loss += TBPTTTrainer::bce_loss(logits[k], target.values[k]);
+                    float pred_bit = (probs[k] >= 0.5f) ? 1.0f : 0.0f;
+                    if (std::abs(pred_bit - target.values[k]) < 1e-3f) {
+                        correct_steps++;
+                    }
                 }
             }
         }
@@ -54,10 +66,10 @@ EvalMetrics Trainer::evaluate(Environment& eval_env, uint32_t max_eval_steps) {
     net_.set_state(saved_state);
 
     metrics.evaluated_steps = valid_count;
-    metrics.correct_steps = correct_bits;
+    metrics.correct_steps = correct_steps;
     if (valid_count > 0) {
         metrics.loss = static_cast<float>(total_loss / valid_count);
-        metrics.accuracy = static_cast<float>(correct_bits) / static_cast<float>(valid_count);
+        metrics.accuracy = static_cast<float>(correct_steps) / static_cast<float>(valid_count);
     }
 
     return metrics;
@@ -71,6 +83,7 @@ TrainSummary Trainer::train(
 ) {
     TrainSummary summary;
     TBPTTTrainer tbptt(net_, learning_rate_, max_grad_norm_);
+    tbptt.set_loss_type(loss_type_);
     SGDOptimizer optimizer(net_, learning_rate_, 0.9f, 0.0f); // Momentum 0.9 for faster convergence
     Gradients grads(net_);
 

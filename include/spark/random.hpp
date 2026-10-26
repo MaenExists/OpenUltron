@@ -40,6 +40,10 @@ public:
         return dist(rng_);
     }
 
+    uint64_t next_u64() {
+        return rng_();
+    }
+
     float xavier(size_t fan_in, size_t fan_out) {
         float limit = std::sqrt(6.0f / static_cast<float>(fan_in + fan_out));
         return uniform_float(-limit, limit);

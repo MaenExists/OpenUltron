@@ -56,12 +56,16 @@ public:
 
     EvalMetrics evaluate(Environment& eval_env, uint32_t max_eval_steps = 500);
 
+    LossType loss_type() const { return loss_type_; }
+    void set_loss_type(LossType type) { loss_type_ = type; }
+
 private:
     MicroUnitNetwork& net_;
     Environment& train_env_;
     Environment* eval_env_;
     float learning_rate_;
     float max_grad_norm_;
+    LossType loss_type_ = LossType::BinaryCrossEntropy;
 };
 
 } // namespace spark

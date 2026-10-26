@@ -49,8 +49,18 @@
   - Automated tests passing 100% (`test_local_learning`, all 7 CTest suites passing).
   - Produced comprehensive scientific report `docs/PHASE4_FINDINGS.md` and CSV registries.
 
+## In Progress
+- **Phase 5: World Models, Causal Learning & Predictive Generation**
+  - **Milestone 5A — Grid-world foundation** (Completed: 2026-10-26)
+    - Implemented 5x5 `GridWorldEnv` with deterministic movement rules, boundary collisions, obstacle collisions, and agent placement guards (`include/spark/gridworld.hpp`, `src/gridworld.cpp`).
+    - Implemented fully observable (55 dims) and partially observable (56 dims with mask) observation encodings.
+    - Implemented reproducible layout generator and dataset split generator with 0-overlap uniqueness guarantees across train/val/test splits.
+    - Extended `TBPTTTrainer` and `Trainer` with `LossType::CategoricalCrossEntropy` using stable log-sum-exp and softmax readout.
+    - Implemented `verify_categorical_gradients_finite_difference` with verified relative error $< 4.3 \times 10^{-5}$ across all 5 parameter groups.
+    - 10-point test suite `test_gridworld` passing 100%; all 8/8 CTests passing in 0.16s.
+  - **Milestone 5B — One-step world-model learning** (Next)
+
 ## Pending Phases
-- Phase 5: World-Model Experiments
 - Phase 6: Iterative Internal Computation
 - Phase 7: Adaptive Topology
 - Phase 8: INT8 Quantization & Memory Optimization

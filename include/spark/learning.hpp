@@ -10,6 +10,11 @@
 
 namespace spark {
 
+enum class LossType {
+    BinaryCrossEntropy,
+    CategoricalCrossEntropy
+};
+
 struct Gradients {
     std::vector<float> d_weights; // CSR recurrent weights [total_edges]
     std::vector<float> d_U;       // Input projection [num_units x input_dim]
@@ -56,6 +61,12 @@ public:
     static float bce_loss(float z, float y);
     static float bce_grad(float z, float y);
 
+    // Numerically stable Categorical Cross Entropy loss for logits and one-hot target
+    static float categorical_ce_loss(const std::vector<float>& logits, const std::vector<float>& target_one_hot);
+
+    LossType loss_type() const { return loss_type_; }
+    void set_loss_type(LossType type) { loss_type_ = type; }
+
     MicroUnitNetwork& network() { return net_; }
     float learning_rate() const { return lr_; }
     void set_learning_rate(float lr) { lr_ = lr; }
@@ -66,6 +77,7 @@ private:
     MicroUnitNetwork& net_;
     float lr_;
     float max_grad_norm_;
+    LossType loss_type_ = LossType::BinaryCrossEntropy;
 };
 
 class SGDOptimizer {
@@ -105,6 +117,14 @@ struct GradientCheckResult {
 };
 
 GradientCheckResult verify_gradients_finite_difference(
+    MicroUnitNetwork& net,
+    const std::vector<Observation>& observations,
+    const std::vector<Target>& targets,
+    float epsilon = 1e-4f,
+    double tolerance = 1e-3
+);
+
+GradientCheckResult verify_categorical_gradients_finite_difference(
     MicroUnitNetwork& net,
     const std::vector<Observation>& observations,
     const std::vector<Target>& targets,

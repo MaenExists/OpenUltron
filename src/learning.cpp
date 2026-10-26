@@ -59,6 +59,20 @@ float TBPTTTrainer::bce_grad(float z, float y) {
     return MicroUnitNetwork::stable_sigmoid(z) - y;
 }
 
+float TBPTTTrainer::categorical_ce_loss(const std::vector<float>& z, const std::vector<float>& y) {
+    if (z.empty() || y.empty()) return 0.0f;
+    float max_z = *std::max_element(z.begin(), z.end());
+    double sum_exp = 0.0;
+    double dot_yz = 0.0;
+    for (size_t k = 0; k < z.size(); ++k) {
+        sum_exp += std::exp(static_cast<double>(z[k]) - static_cast<double>(max_z));
+        dot_yz += static_cast<double>(y[k]) * static_cast<double>(z[k]);
+    }
+    double log_sum_exp = static_cast<double>(max_z) + std::log(sum_exp);
+    double loss = log_sum_exp - dot_yz;
+    return static_cast<float>(std::max(0.0, loss));
+}
+
 float TBPTTTrainer::forward_unroll(
     const std::vector<Observation>& observations,
     const std::vector<Target>& targets,
@@ -73,13 +87,15 @@ float TBPTTTrainer::forward_unroll(
     std::vector<float> logits;
     std::vector<float> probs;
 
+    ReadoutMode r_mode = (loss_type_ == LossType::CategoricalCrossEntropy) ? ReadoutMode::Softmax : ReadoutMode::Sigmoid;
+
     for (size_t t = 0; t < observations.size(); ++t) {
         StepRecord rec;
         rec.x = observations[t].values;
         rec.h_prev = net_.state();
         rec.target = targets[t];
 
-        net_.forward_step(rec.x, logits, probs, ReadoutMode::Sigmoid);
+        net_.forward_step(rec.x, logits, probs, r_mode);
 
         rec.a = net_.pre_activations();
         rec.h = net_.state();
@@ -87,9 +103,14 @@ float TBPTTTrainer::forward_unroll(
         rec.p = probs;
 
         if (rec.target.valid) {
-            for (size_t k = 0; k < logits.size(); ++k) {
-                total_loss += bce_loss(logits[k], rec.target.values[k]);
+            if (loss_type_ == LossType::CategoricalCrossEntropy) {
+                total_loss += categorical_ce_loss(logits, rec.target.values);
                 valid_elements++;
+            } else {
+                for (size_t k = 0; k < logits.size(); ++k) {
+                    total_loss += bce_loss(logits[k], rec.target.values[k]);
+                    valid_elements++;
+                }
             }
         }
 
@@ -121,7 +142,11 @@ void TBPTTTrainer::backward_unroll(
     size_t valid_elements = 0;
     for (const auto& rec : step_records) {
         if (rec.target.valid) {
-            valid_elements += Dout;
+            if (loss_type_ == LossType::CategoricalCrossEntropy) {
+                valid_elements += 1;
+            } else {
+                valid_elements += Dout;
+            }
         }
     }
     float norm_factor = (valid_elements > 0) ? (1.0f / static_cast<float>(valid_elements)) : 1.0f;
@@ -402,6 +427,177 @@ GradientCheckResult verify_gradients_finite_difference(
     if (!check_params("recurrent_weights", net.graph().weights.size(), analytical_grads.d_weights)) return result;
 
     result.message = "All parameters verified successfully within tolerance";
+    return result;
+}
+
+GradientCheckResult verify_categorical_gradients_finite_difference(
+    MicroUnitNetwork& net,
+    const std::vector<Observation>& observations,
+    const std::vector<Target>& targets,
+    float epsilon,
+    double tolerance
+) {
+    GradientCheckResult result;
+    result.passed = true;
+    result.max_relative_error = 0.0;
+
+    TBPTTTrainer trainer(net);
+    trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+    Gradients analytical_grads(net);
+
+    std::vector<StepRecord> records;
+    trainer.forward_unroll(observations, targets, records);
+    trainer.backward_unroll(records, analytical_grads);
+
+    const uint32_t N = net.config().num_units;
+    const uint32_t Din = net.config().input_dim;
+    const uint32_t Dout = net.config().output_dim;
+    const double alpha = static_cast<double>(net.config().alpha);
+    const double beta = static_cast<double>(net.config().beta);
+
+    const auto& offsets = net.graph().offsets;
+    const auto& sources = net.graph().sources;
+    const auto& weights = net.graph().weights;
+    const auto& U = net.input_weights();
+    const auto& biases = net.biases();
+    const auto& V = net.output_weights();
+    const auto& c = net.output_biases();
+
+    // High-precision simulation of categorical cross-entropy loss with double precision
+    auto compute_loss_double = [&](
+        const std::string& target_group,
+        size_t target_idx,
+        double delta
+    ) -> double {
+        std::vector<double> h_curr(N, 0.0);
+        std::vector<double> h_prev(N, 0.0);
+        double total_loss = 0.0;
+        size_t valid_elements = 0;
+
+        for (size_t t = 0; t < observations.size(); ++t) {
+            const auto& obs_vec = observations[t].values;
+
+            for (uint32_t i = 0; i < N; ++i) {
+                uint32_t start = offsets[i];
+                uint32_t end = offsets[i + 1];
+                uint32_t Ki = end - start;
+
+                double rec_sum = 0.0;
+                for (uint32_t e = start; e < end; ++e) {
+                    uint32_t src = sources[e];
+                    double w = static_cast<double>(weights[e]);
+                    if (target_group == "recurrent_weights" && e == target_idx) {
+                        w += delta;
+                    }
+                    rec_sum += w * h_prev[src];
+                }
+
+                double rec_term = 0.0;
+                if (Ki > 0) {
+                    rec_term = (beta / std::sqrt(static_cast<double>(Ki))) * rec_sum;
+                }
+
+                double in_term = 0.0;
+                size_t u_row = static_cast<size_t>(i) * Din;
+                for (uint32_t d = 0; d < Din; ++d) {
+                    double u_val = static_cast<double>(U[u_row + d]);
+                    if (target_group == "input_weights" && (u_row + d) == target_idx) {
+                        u_val += delta;
+                    }
+                    in_term += u_val * static_cast<double>(obs_vec[d]);
+                }
+
+                double b_val = static_cast<double>(biases[i]);
+                if (target_group == "unit_biases" && i == target_idx) {
+                    b_val += delta;
+                }
+
+                double a_i = alpha * h_prev[i] + rec_term + in_term + b_val;
+                h_curr[i] = std::tanh(a_i);
+            }
+
+            h_prev = h_curr;
+
+            if (targets[t].valid) {
+                std::vector<double> z(Dout, 0.0);
+                double max_z = -1e30;
+                for (uint32_t k = 0; k < Dout; ++k) {
+                    double c_val = static_cast<double>(c[k]);
+                    if (target_group == "output_biases" && k == target_idx) {
+                        c_val += delta;
+                    }
+
+                    double z_k = c_val;
+                    size_t v_row = static_cast<size_t>(k) * N;
+                    for (uint32_t i = 0; i < N; ++i) {
+                        double v_val = static_cast<double>(V[v_row + i]);
+                        if (target_group == "output_weights" && (v_row + i) == target_idx) {
+                            v_val += delta;
+                        }
+                        z_k += v_val * h_curr[i];
+                    }
+                    z[k] = z_k;
+                    if (z_k > max_z) max_z = z_k;
+                }
+
+                double sum_exp = 0.0;
+                double dot_yz = 0.0;
+                for (uint32_t k = 0; k < Dout; ++k) {
+                    sum_exp += std::exp(z[k] - max_z);
+                    dot_yz += static_cast<double>(targets[t].values[k]) * z[k];
+                }
+                double cce = (max_z + std::log(sum_exp)) - dot_yz;
+                total_loss += cce;
+                valid_elements++;
+            }
+        }
+
+        return (valid_elements > 0) ? (total_loss / valid_elements) : 0.0;
+    };
+
+    auto check_params = [&](
+        const std::string& name,
+        size_t param_count,
+        const std::vector<float>& ana_grads
+    ) -> bool {
+        double eps = (epsilon > 0.0f) ? static_cast<double>(epsilon) : 1e-6;
+        for (size_t idx = 0; idx < param_count; ++idx) {
+            double loss_plus = compute_loss_double(name, idx, +eps);
+            double loss_minus = compute_loss_double(name, idx, -eps);
+
+            double num_grad = (loss_plus - loss_minus) / (2.0 * eps);
+            double ana_grad = static_cast<double>(ana_grads[idx]);
+
+            double denom = std::max({std::abs(ana_grad), std::abs(num_grad), 1e-4});
+            double rel_err = std::abs(ana_grad - num_grad) / denom;
+
+            if (rel_err > result.max_relative_error) {
+                result.max_relative_error = rel_err;
+                result.param_name = name;
+                result.param_index = idx;
+                result.analytical_val = static_cast<float>(ana_grad);
+                result.numerical_val = static_cast<float>(num_grad);
+            }
+
+            if (rel_err > tolerance) {
+                result.passed = false;
+                result.message = "Gradient mismatch in " + name + " at index " + std::to_string(idx) +
+                                 ": analytical=" + std::to_string(ana_grad) +
+                                 ", numerical=" + std::to_string(num_grad) +
+                                 ", rel_error=" + std::to_string(rel_err);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!check_params("output_biases", net.output_biases().size(), analytical_grads.d_c)) return result;
+    if (!check_params("output_weights", net.output_weights().size(), analytical_grads.d_V)) return result;
+    if (!check_params("unit_biases", net.biases().size(), analytical_grads.d_biases)) return result;
+    if (!check_params("input_weights", net.input_weights().size(), analytical_grads.d_U)) return result;
+    if (!check_params("recurrent_weights", net.graph().weights.size(), analytical_grads.d_weights)) return result;
+
+    result.message = "All categorical parameters verified successfully within tolerance";
     return result;
 }
 
