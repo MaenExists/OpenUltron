@@ -839,4 +839,184 @@ PartialObsMetrics evaluate_random_partial_obs(
     return metrics;
 }
 
+void OneStepDiagnosticMetrics::print_report() const {
+    std::cout << std::string(85, '-') << "\n"
+              << "Diagnostic Report: " << model_name << "\n"
+              << "Total Transitions: " << total_transitions << " | Overall Accuracy: "
+              << std::fixed << std::setprecision(2) << (overall_acc() * 100.0f) << "%"
+              << " | Mean Loss: " << std::setprecision(4) << mean_loss() << "\n"
+              << std::string(85, '-') << "\n"
+              << "Transition Outcomes:\n"
+              << "  Voluntary Stay      : " << std::setw(6) << (stay_acc() * 100.0f) << "% (" << stay_correct << "/" << stay_total << ")\n"
+              << "  Successful Move     : " << std::setw(6) << (succ_acc() * 100.0f) << "% (" << succ_moves_correct << "/" << succ_moves_total << ")\n"
+              << "  Boundary Collision  : " << std::setw(6) << (bound_acc() * 100.0f) << "% (" << bound_blocks_correct << "/" << bound_blocks_total << ")\n"
+              << "  Obstacle Collision  : " << std::setw(6) << (obs_acc() * 100.0f) << "% (" << obs_blocks_correct << "/" << obs_blocks_total << ")\n"
+              << "Per-Action Accuracy:\n"
+              << "  Up   : " << std::setw(6) << (action_acc(0) * 100.0f) << "% (" << action_correct[0] << "/" << action_total[0] << ")\n"
+              << "  Down : " << std::setw(6) << (action_acc(1) * 100.0f) << "% (" << action_correct[1] << "/" << action_total[1] << ")\n"
+              << "  Left : " << std::setw(6) << (action_acc(2) * 100.0f) << "% (" << action_correct[2] << "/" << action_total[2] << ")\n"
+              << "  Right: " << std::setw(6) << (action_acc(3) * 100.0f) << "% (" << action_correct[3] << "/" << action_total[3] << ")\n"
+              << "  Stay : " << std::setw(6) << (action_acc(4) * 100.0f) << "% (" << action_correct[4] << "/" << action_total[4] << ")\n"
+              << "Obstacle Density Breakdown:\n"
+              << "  Low (<=4 obs) : " << std::setw(6) << (density_acc(0) * 100.0f) << "% (" << density_correct[0] << "/" << density_total[0] << ")\n"
+              << "  Med (5-6 obs) : " << std::setw(6) << (density_acc(1) * 100.0f) << "% (" << density_correct[1] << "/" << density_total[1] << ")\n"
+              << "  High (>=7 obs): " << std::setw(6) << (density_acc(2) * 100.0f) << "% (" << density_correct[2] << "/" << density_total[2] << ")\n"
+              << std::string(85, '-') << std::endl;
+}
+
+OneStepDiagnosticMetrics evaluate_onestep_diagnostic(
+    MicroUnitNetwork& net,
+    GridWorldEnv& env,
+    uint32_t total_transitions
+) {
+    OneStepDiagnosticMetrics m;
+    m.model_name = "SPARK_OneStep";
+    m.total_transitions = total_transitions;
+
+    std::vector<float> logits, probs;
+    auto orig_mode = env.observation_mode();
+    env.set_observation_mode(GridObservationMode::FullyObservable);
+    env.reset();
+    net.reset_state();
+
+    for (uint32_t step = 0; step < total_transitions; ++step) {
+        if (env.is_done()) {
+            env.reset();
+            net.reset_state();
+        }
+
+        Observation obs = env.get_observation();
+        Target target = env.get_target();
+        const auto& trans = env.last_transition();
+        Action a = env.current_action();
+        int a_idx = static_cast<int>(a);
+        uint32_t obs_count = env.layout().obstacle_count();
+        int dens_idx = (obs_count <= 4) ? 0 : ((obs_count <= 6) ? 1 : 2);
+
+        net.forward_step(obs.values, logits, probs, ReadoutMode::Softmax);
+        float loss = TBPTTTrainer::categorical_ce_loss(logits, target.values);
+        m.total_loss += loss;
+
+        uint32_t pred = static_cast<uint32_t>(std::distance(probs.begin(), std::max_element(probs.begin(), probs.end())));
+        uint32_t truth = trans.to_pos;
+        bool correct = (pred == truth);
+
+        if (correct) m.correct_transitions++;
+
+        if (a == Action::Stay) {
+            m.stay_total++;
+            if (correct) m.stay_correct++;
+        } else if (trans.moved) {
+            m.succ_moves_total++;
+            if (correct) m.succ_moves_correct++;
+        } else if (trans.blocked_by_boundary) {
+            m.bound_blocks_total++;
+            if (correct) m.bound_blocks_correct++;
+        } else if (trans.blocked_by_obstacle) {
+            m.obs_blocks_total++;
+            if (correct) m.obs_blocks_correct++;
+        }
+
+        if (a_idx >= 0 && a_idx < 5) {
+            m.action_total[a_idx]++;
+            if (correct) m.action_correct[a_idx]++;
+        }
+
+        m.density_total[dens_idx]++;
+        if (correct) m.density_correct[dens_idx]++;
+
+        env.step();
+    }
+
+    env.set_observation_mode(orig_mode);
+    return m;
+}
+
+BaselineOneStepDiagnostics evaluate_baseline_diagnostics(
+    GridWorldEnv& env,
+    uint32_t total_transitions,
+    uint64_t seed
+) {
+    BaselineOneStepDiagnostics res;
+    res.random_predictor.model_name = "Random Predictor";
+    res.random_predictor.total_transitions = total_transitions;
+
+    res.copy_current_predictor.model_name = "Copy Current Position";
+    res.copy_current_predictor.total_transitions = total_transitions;
+
+    res.naive_movement_predictor.model_name = "Naive Movement (Ignore Obstacles)";
+    res.naive_movement_predictor.total_transitions = total_transitions;
+
+    res.ground_truth_oracle.model_name = "Ground-Truth Oracle";
+    res.ground_truth_oracle.total_transitions = total_transitions;
+
+    Random rng(seed);
+    std::vector<uint8_t> empty_grid(GridWorldEnv::NUM_CELLS, 0);
+
+    auto orig_mode = env.observation_mode();
+    env.set_observation_mode(GridObservationMode::FullyObservable);
+    env.reset();
+
+    for (uint32_t step = 0; step < total_transitions; ++step) {
+        if (env.is_done()) {
+            env.reset();
+        }
+
+        const auto& trans = env.last_transition();
+        uint32_t truth = trans.to_pos;
+        uint32_t current_pos = env.agent_position();
+        Action a = env.current_action();
+        int a_idx = static_cast<int>(a);
+        uint32_t obs_count = env.layout().obstacle_count();
+        int dens_idx = (obs_count <= 4) ? 0 : ((obs_count <= 6) ? 1 : 2);
+
+        auto record_pred = [&](OneStepDiagnosticMetrics& m, uint32_t pred, float loss) {
+            m.total_loss += loss;
+            bool correct = (pred == truth);
+            if (correct) m.correct_transitions++;
+
+            if (a == Action::Stay) {
+                m.stay_total++;
+                if (correct) m.stay_correct++;
+            } else if (trans.moved) {
+                m.succ_moves_total++;
+                if (correct) m.succ_moves_correct++;
+            } else if (trans.blocked_by_boundary) {
+                m.bound_blocks_total++;
+                if (correct) m.bound_blocks_correct++;
+            } else if (trans.blocked_by_obstacle) {
+                m.obs_blocks_total++;
+                if (correct) m.obs_blocks_correct++;
+            }
+
+            if (a_idx >= 0 && a_idx < 5) {
+                m.action_total[a_idx]++;
+                if (correct) m.action_correct[a_idx]++;
+            }
+
+            m.density_total[dens_idx]++;
+            if (correct) m.density_correct[dens_idx]++;
+        };
+
+        // 1. Random
+        uint32_t rand_pred = static_cast<uint32_t>(rng.next_u64() % GridWorldEnv::NUM_CELLS);
+        record_pred(res.random_predictor, rand_pred, 3.2188758f);
+
+        // 2. Copy current
+        record_pred(res.copy_current_predictor, current_pos, (current_pos == truth ? 0.0f : 15.0f));
+
+        // 3. Naive move
+        auto naive_trans = GridWorldEnv::simulate_transition(current_pos, a, empty_grid);
+        record_pred(res.naive_movement_predictor, naive_trans.to_pos, (naive_trans.to_pos == truth ? 0.0f : 15.0f));
+
+        // 4. Oracle
+        record_pred(res.ground_truth_oracle, truth, 0.0f);
+
+        env.step();
+    }
+
+    env.set_observation_mode(orig_mode);
+    return res;
+}
+
 } // namespace spark

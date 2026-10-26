@@ -368,4 +368,56 @@ PartialObsMetrics evaluate_random_partial_obs(
     uint64_t seed = 42ULL
 );
 
+// Milestone 5D.0: Comprehensive One-Step Diagnostic Breakdown
+struct OneStepDiagnosticMetrics {
+    std::string model_name;
+    size_t total_transitions = 0;
+    size_t correct_transitions = 0;
+    double total_loss = 0.0;
+
+    // Movement outcome breakdown (partitions 100% of transitions)
+    size_t succ_moves_total = 0, succ_moves_correct = 0;
+    size_t stay_total = 0, stay_correct = 0;
+    size_t bound_blocks_total = 0, bound_blocks_correct = 0;
+    size_t obs_blocks_total = 0, obs_blocks_correct = 0;
+
+    // Action breakdown: 0=Up, 1=Down, 2=Left, 3=Right, 4=Stay
+    size_t action_total[5] = {0, 0, 0, 0, 0};
+    size_t action_correct[5] = {0, 0, 0, 0, 0};
+
+    // Obstacle density breakdown: 0: Low (<=4), 1: Med (5-6), 2: High (>=7)
+    size_t density_total[3] = {0, 0, 0};
+    size_t density_correct[3] = {0, 0, 0};
+
+    float overall_acc() const { return total_transitions > 0 ? static_cast<float>(correct_transitions) / total_transitions : 0.0f; }
+    float mean_loss() const { return total_transitions > 0 ? static_cast<float>(total_loss / total_transitions) : 0.0f; }
+    float succ_acc() const { return succ_moves_total > 0 ? static_cast<float>(succ_moves_correct) / succ_moves_total : 0.0f; }
+    float stay_acc() const { return stay_total > 0 ? static_cast<float>(stay_correct) / stay_total : 0.0f; }
+    float bound_acc() const { return bound_blocks_total > 0 ? static_cast<float>(bound_blocks_correct) / bound_blocks_total : 0.0f; }
+    float obs_acc() const { return obs_blocks_total > 0 ? static_cast<float>(obs_blocks_correct) / obs_blocks_total : 0.0f; }
+    float action_acc(int a) const { return (a >= 0 && a < 5 && action_total[a] > 0) ? static_cast<float>(action_correct[a]) / action_total[a] : 0.0f; }
+    float density_acc(int d) const { return (d >= 0 && d < 3 && density_total[d] > 0) ? static_cast<float>(density_correct[d]) / density_total[d] : 0.0f; }
+
+    void print_report() const;
+};
+
+OneStepDiagnosticMetrics evaluate_onestep_diagnostic(
+    MicroUnitNetwork& net,
+    GridWorldEnv& env,
+    uint32_t total_transitions
+);
+
+struct BaselineOneStepDiagnostics {
+    OneStepDiagnosticMetrics random_predictor;
+    OneStepDiagnosticMetrics copy_current_predictor;
+    OneStepDiagnosticMetrics naive_movement_predictor;
+    OneStepDiagnosticMetrics ground_truth_oracle;
+};
+
+BaselineOneStepDiagnostics evaluate_baseline_diagnostics(
+    GridWorldEnv& env,
+    uint32_t total_transitions,
+    uint64_t seed = 42ULL
+);
+
 } // namespace spark

@@ -1413,4 +1413,172 @@ std::vector<Milestone5cRecord> ExperimentRunner::run_milestone5c_suite(
     return all_records;
 }
 
+void ExperimentRunner::run_milestone5d0_diagnostic(
+    uint32_t train_steps,
+    uint32_t test_transitions,
+    float lr,
+    uint64_t seed,
+    const std::string& csv_path
+) {
+    std::cout << "\n=========================================================================================\n"
+              << "  SPARK Milestone 5D.0: One-Step Transition Accuracy & Weakness Investigation\n"
+              << "=========================================================================================\n"
+              << "  Evaluating: Train Layouts vs Unseen Test Layouts (10,000 transitions each)\n"
+              << "  Investigating: Free moves, Boundary collisions, Obstacle collisions, Actions, Densities\n"
+              << "  Comparing: SPARK TBPTT vs Feedforward Baseline vs Non-learning Controls vs Oracle\n"
+              << "=========================================================================================\n"
+              << std::endl;
+
+    auto splits = GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+
+    GridWorldEnv train_env(splits.train_layouts, 50, seed);
+    GridWorldEnv val_env(splits.val_layouts, 50, seed + 1000ULL);
+    GridWorldEnv test_env(splits.test_layouts, 50, seed + 2000ULL);
+
+    // 1. Non-Learning Controls on Test Layouts
+    std::cout << ">>> 1. Non-Learning Controls & Simulator Oracle (Unseen Test Layouts) <<<" << std::endl;
+    auto base_diag = evaluate_baseline_diagnostics(test_env, test_transitions, seed);
+    base_diag.ground_truth_oracle.print_report();
+    base_diag.random_predictor.print_report();
+    base_diag.copy_current_predictor.print_report();
+    base_diag.naive_movement_predictor.print_report();
+
+    // 2. Feedforward Baseline (same parameter count: 128 units, W=0, no recurrence)
+    std::cout << ">>> 2. Training Feedforward Baseline (128 units, 10,393 params, W=0) <<<" << std::endl;
+    SparseGraphConfig g_cfg_ff;
+    g_cfg_ff.num_units = 128;
+    g_cfg_ff.fan_in = 8;
+    g_cfg_ff.seed = seed;
+    NetworkConfig n_cfg_ff;
+    n_cfg_ff.num_units = 128;
+    n_cfg_ff.input_dim = 55;
+    n_cfg_ff.output_dim = 25;
+    n_cfg_ff.alpha = 0.0f;
+    n_cfg_ff.beta = 0.0f;
+    n_cfg_ff.seed = seed;
+
+    MicroUnitNetwork ff_net(n_cfg_ff, g_cfg_ff);
+    std::fill(ff_net.graph().weights.begin(), ff_net.graph().weights.end(), 0.0f);
+
+    Trainer ff_trainer(ff_net, train_env, &val_env, lr, 1.0f);
+    ff_trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+    ff_trainer.set_train_recurrent(false);
+    ff_trainer.train(train_steps, 8, 0, true);
+
+    auto ff_train_m = evaluate_onestep_diagnostic(ff_net, train_env, test_transitions);
+    ff_train_m.model_name = "Feedforward Baseline (128 units, Train Layouts)";
+    ff_train_m.print_report();
+
+    auto ff_test_m = evaluate_onestep_diagnostic(ff_net, test_env, test_transitions);
+    ff_test_m.model_name = "Feedforward Baseline (128 units, Unseen Test Layouts)";
+    ff_test_m.print_report();
+
+    // 3. SPARK Recurrent Model (128 units, fan-in 8, TBPTT unroll 8)
+    std::cout << ">>> 3. Training SPARK Recurrent Architecture (128 units, fan-in 8, TBPTT) <<<" << std::endl;
+    SparseGraphConfig g_cfg;
+    g_cfg.num_units = 128;
+    g_cfg.fan_in = 8;
+    g_cfg.seed = seed;
+    NetworkConfig n_cfg;
+    n_cfg.num_units = 128;
+    n_cfg.input_dim = 55;
+    n_cfg.output_dim = 25;
+    n_cfg.alpha = 0.8f;
+    n_cfg.beta = 1.0f;
+    n_cfg.seed = seed;
+
+    MicroUnitNetwork spark_net(n_cfg, g_cfg);
+    Trainer spark_trainer(spark_net, train_env, &val_env, lr, 1.0f);
+    spark_trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+    spark_trainer.train(train_steps, 8, 0, true);
+
+    auto spark_train_m = evaluate_onestep_diagnostic(spark_net, train_env, test_transitions);
+    spark_train_m.model_name = "SPARK TBPTT (128 units, Train Layouts)";
+    spark_train_m.print_report();
+
+    auto spark_val_m = evaluate_onestep_diagnostic(spark_net, val_env, test_transitions);
+    spark_val_m.model_name = "SPARK TBPTT (128 units, Val Layouts)";
+    spark_val_m.print_report();
+
+    auto spark_test_m = evaluate_onestep_diagnostic(spark_net, test_env, test_transitions);
+    spark_test_m.model_name = "SPARK TBPTT (128 units, Unseen Test Layouts)";
+    spark_test_m.print_report();
+
+    // 4. Extended Optimization Investigation (20,000 steps)
+    std::cout << ">>> 4. Extended Optimization Investigation (20,000 steps) <<<" << std::endl;
+    MicroUnitNetwork spark_20k_net(n_cfg, g_cfg);
+    Trainer spark_20k_trainer(spark_20k_net, train_env, &val_env, lr, 1.0f);
+    spark_20k_trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+    spark_20k_trainer.train(20000, 8, 0, true);
+
+    auto spark_20k_test_m = evaluate_onestep_diagnostic(spark_20k_net, test_env, test_transitions);
+    spark_20k_test_m.model_name = "SPARK TBPTT 20k steps (Unseen Test Layouts)";
+    spark_20k_test_m.print_report();
+
+    // 5. Consolidated Summary Table
+    std::cout << "\n=========================================================================================\n"
+              << "  CONSOLIDATED 5D.0 DIAGNOSTIC COMPARISON (Unseen Test Layouts, 10,000 transitions)\n"
+              << "=========================================================================================\n"
+              << std::left << std::setw(32) << "Model / Condition"
+              << std::right << std::setw(12) << "Overall Acc"
+              << std::setw(12) << "Free Move"
+              << std::setw(12) << "Boundary"
+              << std::setw(12) << "Obstacle"
+              << std::setw(12) << "Stay"
+              << std::setw(10) << "Loss"
+              << "\n" << std::string(102, '-') << std::endl;
+
+    auto print_row = [](const std::string& name, const OneStepDiagnosticMetrics& m) {
+        std::cout << std::left << std::setw(32) << name
+                  << std::right << std::fixed << std::setprecision(2)
+                  << std::setw(11) << (m.overall_acc() * 100.0f) << "%"
+                  << std::setw(11) << (m.succ_acc() * 100.0f) << "%"
+                  << std::setw(11) << (m.bound_acc() * 100.0f) << "%"
+                  << std::setw(11) << (m.obs_acc() * 100.0f) << "%"
+                  << std::setw(11) << (m.stay_acc() * 100.0f) << "%"
+                  << std::setprecision(4) << std::setw(10) << m.mean_loss()
+                  << std::endl;
+    };
+
+    print_row("1. Random Predictor", base_diag.random_predictor);
+    print_row("2. Copy Current Position", base_diag.copy_current_predictor);
+    print_row("3. Naive Movement (Blind)", base_diag.naive_movement_predictor);
+    print_row("4. Ground-Truth Oracle", base_diag.ground_truth_oracle);
+    print_row("5. Feedforward MLP (Train)", ff_train_m);
+    print_row("6. Feedforward MLP (Test)", ff_test_m);
+    print_row("7. SPARK TBPTT (Train)", spark_train_m);
+    print_row("8. SPARK TBPTT (Val)", spark_val_m);
+    print_row("9. SPARK TBPTT (Test, 10k)", spark_test_m);
+    print_row("10. SPARK TBPTT (Test, 20k)", spark_20k_test_m);
+    std::cout << std::string(102, '=') << "\n" << std::endl;
+
+    // Export CSV
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << "model_name,dataset,total_transitions,overall_acc,succ_acc,bound_acc,obs_acc,stay_acc,"
+                << "up_acc,down_acc,left_acc,right_acc,stay_action_acc,low_dens_acc,med_dens_acc,high_dens_acc,mean_loss\n";
+            auto write_csv_row = [&](const std::string& ds, const OneStepDiagnosticMetrics& m) {
+                ofs << m.model_name << "," << ds << "," << m.total_transitions << ","
+                    << std::fixed << std::setprecision(4) << m.overall_acc() << ","
+                    << m.succ_acc() << "," << m.bound_acc() << "," << m.obs_acc() << "," << m.stay_acc() << ","
+                    << m.action_acc(0) << "," << m.action_acc(1) << "," << m.action_acc(2) << "," << m.action_acc(3) << "," << m.action_acc(4) << ","
+                    << m.density_acc(0) << "," << m.density_acc(1) << "," << m.density_acc(2) << ","
+                    << std::setprecision(5) << m.mean_loss() << "\n";
+            };
+            write_csv_row("test", base_diag.random_predictor);
+            write_csv_row("test", base_diag.copy_current_predictor);
+            write_csv_row("test", base_diag.naive_movement_predictor);
+            write_csv_row("test", base_diag.ground_truth_oracle);
+            write_csv_row("train", ff_train_m);
+            write_csv_row("test", ff_test_m);
+            write_csv_row("train", spark_train_m);
+            write_csv_row("val", spark_val_m);
+            write_csv_row("test", spark_test_m);
+            write_csv_row("test", spark_20k_test_m);
+            std::cout << "Saved diagnostic records to " << csv_path << std::endl;
+        }
+    }
+}
+
 } // namespace spark

@@ -104,6 +104,15 @@ public:
         const std::string& csv_path = "experiments/results/phase5/milestone5c_partial_obs.csv"
     );
 
+    // Phase 5 Milestone 5D.0: One-Step Transition Accuracy & Weakness Investigation
+    static void run_milestone5d0_diagnostic(
+        uint32_t train_steps = 10000,
+        uint32_t test_transitions = 10000,
+        float lr = 0.02f,
+        uint64_t seed = 42ULL,
+        const std::string& csv_path = "experiments/results/phase5/milestone5d0_investigation.csv"
+    );
+
     static AggregatedStats compute_aggregate(const std::vector<ExperimentRecord>& records, const std::string& name);
 };
 

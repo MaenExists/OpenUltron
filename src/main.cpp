@@ -48,6 +48,7 @@ void print_info() {
               << "  spark local-ablate [--delay D] [--units N] [--seeds S] [--csv PATH]\n"
               << "  spark world-model [--seeds S] [--steps N] [--unroll U] [--lr LR] [--test-transitions T] [--csv PATH]\n"
               << "  spark partial-obs [--seeds S] [--steps N] [--unroll U] [--lr LR] [--episodes E] [--csv PATH]\n"
+              << "  spark onestep-diag [--steps N] [--test-transitions T] [--lr LR] [--seed S] [--csv PATH]\n"
               << std::endl;
 }
 
@@ -513,6 +514,26 @@ void run_partial_obs_cmd(int argc, char* argv[]) {
     spark::ExperimentRunner::run_milestone5c_suite(num_seeds, steps, unroll, lr, episodes, csv_path);
 }
 
+void run_onestep_diag_cmd(int argc, char* argv[]) {
+    uint32_t steps = 10000;
+    uint32_t test_transitions = 10000;
+    float lr = 0.02f;
+    uint64_t seed = 42ULL;
+    std::string csv_path = "experiments/results/phase5/milestone5d0_investigation.csv";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--steps" && i + 1 < argc) steps = std::stoul(argv[++i]);
+        else if (arg == "--test-transitions" && i + 1 < argc) test_transitions = std::stoul(argv[++i]);
+        else if (arg == "--lr" && i + 1 < argc) lr = std::stof(argv[++i]);
+        else if (arg == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
+        else if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    print_banner();
+    spark::ExperimentRunner::run_milestone5d0_diagnostic(steps, test_transitions, lr, seed, csv_path);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_info();
@@ -544,6 +565,8 @@ int main(int argc, char* argv[]) {
         run_world_model_cmd(argc, argv);
     } else if (cmd == "partial-obs") {
         run_partial_obs_cmd(argc, argv);
+    } else if (cmd == "onestep-diag") {
+        run_onestep_diag_cmd(argc, argv);
     } else {
         std::cerr << "Unknown command: '" << cmd << "'\n"
                   << "Run 'spark info' for available commands." << std::endl;
