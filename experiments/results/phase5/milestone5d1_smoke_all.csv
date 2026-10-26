@@ -1,0 +1,13 @@
+model_name,mode,horizon,episodes,total_steps,overall_step_acc,complete_traj_acc,final_pos_acc,mean_manhattan,mean_ce,inference_sec
+GroundTruth_Oracle,teacher-forced,1,100,100,1.0000,1.0000,1.0000,0.000,0.0000,0.000
+SPARK (Teacher-Forced),teacher-forced,1,100,100,0.8900,0.8900,0.8900,0.170,0.4716,0.003
+SPARK (Open-Loop Autoregressive),open-loop,1,100,100,0.8900,0.8900,0.8900,0.170,0.4716,0.003
+GroundTruth_Oracle,teacher-forced,2,100,200,1.0000,1.0000,1.0000,0.000,0.0000,0.000
+SPARK (Teacher-Forced),teacher-forced,2,100,200,0.9100,0.8300,0.9800,0.110,0.2947,0.004
+SPARK (Open-Loop Autoregressive),open-loop,2,100,200,0.8550,0.8300,0.8700,0.200,0.7892,0.006
+GroundTruth_Oracle,teacher-forced,4,100,400,1.0000,1.0000,1.0000,0.000,0.0000,0.000
+SPARK (Teacher-Forced),teacher-forced,4,100,400,0.9550,0.8700,0.9800,0.050,0.1497,0.009
+SPARK (Open-Loop Autoregressive),open-loop,4,100,400,0.9100,0.8700,0.9100,0.138,0.7385,0.009
+GroundTruth_Oracle,teacher-forced,8,100,800,1.0000,1.0000,1.0000,0.000,0.0000,0.000
+SPARK (Teacher-Forced),teacher-forced,8,100,800,0.9688,0.8400,1.0000,0.041,0.1346,0.017
+SPARK (Open-Loop Autoregressive),open-loop,8,100,800,0.8725,0.8400,0.8600,0.262,1.6793,0.018

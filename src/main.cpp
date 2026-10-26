@@ -4,12 +4,14 @@
 #include "spark/trainer.hpp"
 #include "spark/baselines.hpp"
 #include "spark/experiment_runner.hpp"
+#include "spark/rollout.hpp"
 #include <iostream>
 #include <iomanip>
 #include <string>
 #include <vector>
 #include <cmath>
 #include <sstream>
+#include <fstream>
 
 void print_banner() {
     std::cout << "========================================================\n"
@@ -49,6 +51,7 @@ void print_info() {
               << "  spark world-model [--seeds S] [--steps N] [--unroll U] [--lr LR] [--test-transitions T] [--csv PATH]\n"
               << "  spark partial-obs [--seeds S] [--steps N] [--unroll U] [--lr LR] [--episodes E] [--csv PATH]\n"
               << "  spark onestep-diag [--steps N] [--test-transitions T] [--lr LR] [--seed S] [--csv PATH]\n"
+              << "  spark rollout [--checkpoint PATH] [--mode teacher-forced|open-loop|both] [--horizon H] [--episodes N] [--seed S] [--csv PATH]\n"
               << std::endl;
 }
 
@@ -534,6 +537,106 @@ void run_onestep_diag_cmd(int argc, char* argv[]) {
     spark::ExperimentRunner::run_milestone5d0_diagnostic(steps, test_transitions, lr, seed, csv_path);
 }
 
+void run_rollout_cmd(int argc, char* argv[]) {
+    std::string checkpoint_path = "checkpoints/world_model_best.spark";
+    std::string mode_str = "both";
+    uint32_t horizon = 8;
+    uint32_t episodes = 100;
+    uint64_t seed = 42ULL;
+    std::string csv_path = "";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--checkpoint" && i + 1 < argc) checkpoint_path = argv[++i];
+        else if (arg == "--mode" && i + 1 < argc) mode_str = argv[++i];
+        else if (arg == "--horizon" && i + 1 < argc) horizon = std::stoul(argv[++i]);
+        else if (arg == "--episodes" && i + 1 < argc) episodes = std::stoul(argv[++i]);
+        else if (arg == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
+        else if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    if (horizon == 0) {
+        std::cerr << "Error: Horizon must be >= 1." << std::endl;
+        return;
+    }
+
+    print_banner();
+    std::cout << ">>> SPARK Multi-Step Predictive Generation (Rollout Engine) <<<\n"
+              << "  Mode       : " << mode_str << "\n"
+              << "  Horizon    : " << horizon << "\n"
+              << "  Episodes   : " << episodes << "\n"
+              << "  Seed       : " << seed << "\n"
+              << "  Checkpoint : " << checkpoint_path << "\n" << std::endl;
+
+    spark::SparseGraphConfig g_cfg;
+    g_cfg.num_units = 128;
+    g_cfg.fan_in = 8;
+    g_cfg.seed = seed;
+
+    spark::NetworkConfig n_cfg;
+    n_cfg.num_units = 128;
+    n_cfg.input_dim = 55;
+    n_cfg.output_dim = 25;
+    n_cfg.alpha = 0.8f;
+    n_cfg.beta = 1.0f;
+    n_cfg.seed = seed;
+
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+
+    bool loaded = spark::MicroUnitNetwork::load_checkpoint(checkpoint_path, net);
+    if (loaded) {
+        std::cout << "Successfully loaded checkpoint from: " << checkpoint_path << std::endl;
+    } else {
+        std::cout << "Checkpoint not found at '" << checkpoint_path << "'. Training high-accuracy reference model (20k steps)..." << std::endl;
+        auto splits_train = spark::GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+        spark::GridWorldEnv train_env(splits_train.train_layouts, 50, seed);
+        spark::GridWorldEnv val_env(splits_train.val_layouts, 50, seed + 1000ULL);
+
+        spark::Trainer trainer(net, train_env, &val_env, 0.02f, 1.0f);
+        trainer.set_loss_type(spark::LossType::CategoricalCrossEntropy);
+        trainer.train(20000, 8, 0, true);
+
+        net.save_checkpoint(checkpoint_path);
+        std::cout << "Model trained and saved to checkpoint: " << checkpoint_path << std::endl;
+    }
+
+    auto splits = spark::GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+
+    std::vector<spark::RolloutMetrics> metrics_list;
+
+    // 1. Oracle
+    auto oracle_metrics = spark::RolloutEngine::evaluate_oracle(splits.test_layouts, horizon, episodes, seed);
+    oracle_metrics.print_summary();
+    metrics_list.push_back(oracle_metrics);
+
+    // 2. Teacher-Forced
+    if (mode_str == "teacher-forced" || mode_str == "both" || mode_str == "all") {
+        auto tf_metrics = spark::RolloutEngine::evaluate_rollouts(net, splits.test_layouts, horizon, episodes, spark::RolloutMode::TeacherForced, seed);
+        tf_metrics.model_name = "SPARK (Teacher-Forced)";
+        tf_metrics.print_summary();
+        metrics_list.push_back(tf_metrics);
+    }
+
+    // 3. Open-Loop
+    if (mode_str == "open-loop" || mode_str == "both" || mode_str == "all") {
+        auto ol_metrics = spark::RolloutEngine::evaluate_rollouts(net, splits.test_layouts, horizon, episodes, spark::RolloutMode::OpenLoop, seed);
+        ol_metrics.model_name = "SPARK (Open-Loop Autoregressive)";
+        ol_metrics.print_summary();
+        metrics_list.push_back(ol_metrics);
+    }
+
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << spark::RolloutMetrics::csv_header() << "\n";
+            for (const auto& m : metrics_list) {
+                ofs << m.to_csv() << "\n";
+            }
+            std::cout << "Saved rollout metrics to: " << csv_path << std::endl;
+        }
+    }
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_info();
@@ -567,6 +670,8 @@ int main(int argc, char* argv[]) {
         run_partial_obs_cmd(argc, argv);
     } else if (cmd == "onestep-diag") {
         run_onestep_diag_cmd(argc, argv);
+    } else if (cmd == "rollout") {
+        run_rollout_cmd(argc, argv);
     } else {
         std::cerr << "Unknown command: '" << cmd << "'\n"
                   << "Run 'spark info' for available commands." << std::endl;

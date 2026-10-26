@@ -38,6 +38,9 @@ public:
     static SparseGraph generate_clustered(const SparseGraphConfig& config, Random& rng);
 
     // Accessors
+    const SparseGraphConfig& config() const { return config_; }
+    void set_config(const SparseGraphConfig& c) { config_ = c; }
+
     uint32_t num_units() const {
         return offsets.empty() ? 0 : static_cast<uint32_t>(offsets.size() - 1);
     }

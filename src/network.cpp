@@ -2,6 +2,8 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <fstream>
+#include <filesystem>
 
 namespace spark {
 
@@ -259,6 +261,162 @@ size_t MicroUnitNetwork::memory_bytes() const {
     size_t state_mem = (h_prev_.capacity() + h_curr_.capacity() + a_curr_.capacity() + biases_.capacity()) * sizeof(float);
     size_t proj_mem = (U_.capacity() + V_.capacity() + c_.capacity()) * sizeof(float);
     return state_mem + proj_mem + graph_.memory_bytes() + sizeof(MicroUnitNetwork);
+}
+
+bool MicroUnitNetwork::save_checkpoint(const std::string& filepath) const {
+    try {
+        std::filesystem::path p(filepath);
+        if (p.has_parent_path()) {
+            std::filesystem::create_directories(p.parent_path());
+        }
+        std::ofstream ofs(filepath, std::ios::binary);
+        if (!ofs.is_open()) {
+            return false;
+        }
+
+        uint32_t magic = 0x5350524B; // 'SPRK'
+        uint32_t version = 1;
+        ofs.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+        ofs.write(reinterpret_cast<const char*>(&version), sizeof(version));
+
+        // NetworkConfig
+        ofs.write(reinterpret_cast<const char*>(&config_.num_units), sizeof(config_.num_units));
+        ofs.write(reinterpret_cast<const char*>(&config_.input_dim), sizeof(config_.input_dim));
+        ofs.write(reinterpret_cast<const char*>(&config_.output_dim), sizeof(config_.output_dim));
+        ofs.write(reinterpret_cast<const char*>(&config_.alpha), sizeof(config_.alpha));
+        ofs.write(reinterpret_cast<const char*>(&config_.beta), sizeof(config_.beta));
+        ofs.write(reinterpret_cast<const char*>(&config_.seed), sizeof(config_.seed));
+
+        // SparseGraphConfig
+        const auto& g_cfg = graph_.config();
+        uint32_t top_val = static_cast<uint32_t>(g_cfg.topology);
+        ofs.write(reinterpret_cast<const char*>(&g_cfg.num_units), sizeof(g_cfg.num_units));
+        ofs.write(reinterpret_cast<const char*>(&g_cfg.fan_in), sizeof(g_cfg.fan_in));
+        ofs.write(reinterpret_cast<const char*>(&top_val), sizeof(top_val));
+        ofs.write(reinterpret_cast<const char*>(&g_cfg.intra_cluster_prob), sizeof(g_cfg.intra_cluster_prob));
+        ofs.write(reinterpret_cast<const char*>(&g_cfg.num_clusters), sizeof(g_cfg.num_clusters));
+        ofs.write(reinterpret_cast<const char*>(&g_cfg.seed), sizeof(g_cfg.seed));
+
+        // CSR Graph arrays
+        uint32_t n_offsets = static_cast<uint32_t>(graph_.offsets.size());
+        uint32_t n_sources = static_cast<uint32_t>(graph_.sources.size());
+        uint32_t n_weights = static_cast<uint32_t>(graph_.weights.size());
+
+        ofs.write(reinterpret_cast<const char*>(&n_offsets), sizeof(n_offsets));
+        ofs.write(reinterpret_cast<const char*>(graph_.offsets.data()), n_offsets * sizeof(uint32_t));
+
+        ofs.write(reinterpret_cast<const char*>(&n_sources), sizeof(n_sources));
+        ofs.write(reinterpret_cast<const char*>(graph_.sources.data()), n_sources * sizeof(uint32_t));
+
+        ofs.write(reinterpret_cast<const char*>(&n_weights), sizeof(n_weights));
+        ofs.write(reinterpret_cast<const char*>(graph_.weights.data()), n_weights * sizeof(float));
+
+        // Network parameters
+        uint32_t n_biases = static_cast<uint32_t>(biases_.size());
+        uint32_t n_U = static_cast<uint32_t>(U_.size());
+        uint32_t n_V = static_cast<uint32_t>(V_.size());
+        uint32_t n_c = static_cast<uint32_t>(c_.size());
+
+        ofs.write(reinterpret_cast<const char*>(&n_biases), sizeof(n_biases));
+        ofs.write(reinterpret_cast<const char*>(biases_.data()), n_biases * sizeof(float));
+
+        ofs.write(reinterpret_cast<const char*>(&n_U), sizeof(n_U));
+        ofs.write(reinterpret_cast<const char*>(U_.data()), n_U * sizeof(float));
+
+        ofs.write(reinterpret_cast<const char*>(&n_V), sizeof(n_V));
+        ofs.write(reinterpret_cast<const char*>(V_.data()), n_V * sizeof(float));
+
+        ofs.write(reinterpret_cast<const char*>(&n_c), sizeof(n_c));
+        ofs.write(reinterpret_cast<const char*>(c_.data()), n_c * sizeof(float));
+
+        return ofs.good();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool MicroUnitNetwork::load_checkpoint(const std::string& filepath, MicroUnitNetwork& out_net) {
+    try {
+        std::ifstream ifs(filepath, std::ios::binary);
+        if (!ifs.is_open()) {
+            return false;
+        }
+
+        uint32_t magic = 0;
+        uint32_t version = 0;
+        ifs.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        ifs.read(reinterpret_cast<char*>(&version), sizeof(version));
+
+        if (magic != 0x5350524B || version != 1) {
+            return false;
+        }
+
+        NetworkConfig net_cfg;
+        ifs.read(reinterpret_cast<char*>(&net_cfg.num_units), sizeof(net_cfg.num_units));
+        ifs.read(reinterpret_cast<char*>(&net_cfg.input_dim), sizeof(net_cfg.input_dim));
+        ifs.read(reinterpret_cast<char*>(&net_cfg.output_dim), sizeof(net_cfg.output_dim));
+        ifs.read(reinterpret_cast<char*>(&net_cfg.alpha), sizeof(net_cfg.alpha));
+        ifs.read(reinterpret_cast<char*>(&net_cfg.beta), sizeof(net_cfg.beta));
+        ifs.read(reinterpret_cast<char*>(&net_cfg.seed), sizeof(net_cfg.seed));
+
+        SparseGraphConfig g_cfg;
+        uint32_t top_val = 0;
+        ifs.read(reinterpret_cast<char*>(&g_cfg.num_units), sizeof(g_cfg.num_units));
+        ifs.read(reinterpret_cast<char*>(&g_cfg.fan_in), sizeof(g_cfg.fan_in));
+        ifs.read(reinterpret_cast<char*>(&top_val), sizeof(top_val));
+        g_cfg.topology = static_cast<TopologyType>(top_val);
+        ifs.read(reinterpret_cast<char*>(&g_cfg.intra_cluster_prob), sizeof(g_cfg.intra_cluster_prob));
+        ifs.read(reinterpret_cast<char*>(&g_cfg.num_clusters), sizeof(g_cfg.num_clusters));
+        ifs.read(reinterpret_cast<char*>(&g_cfg.seed), sizeof(g_cfg.seed));
+
+        uint32_t n_offsets = 0, n_sources = 0, n_weights = 0;
+        ifs.read(reinterpret_cast<char*>(&n_offsets), sizeof(n_offsets));
+        std::vector<uint32_t> offsets(n_offsets);
+        ifs.read(reinterpret_cast<char*>(offsets.data()), n_offsets * sizeof(uint32_t));
+
+        ifs.read(reinterpret_cast<char*>(&n_sources), sizeof(n_sources));
+        std::vector<uint32_t> sources(n_sources);
+        ifs.read(reinterpret_cast<char*>(sources.data()), n_sources * sizeof(uint32_t));
+
+        ifs.read(reinterpret_cast<char*>(&n_weights), sizeof(n_weights));
+        std::vector<float> weights(n_weights);
+        ifs.read(reinterpret_cast<char*>(weights.data()), n_weights * sizeof(float));
+
+        SparseGraph graph;
+        graph.set_config(g_cfg);
+        graph.offsets = std::move(offsets);
+        graph.sources = std::move(sources);
+        graph.weights = std::move(weights);
+
+        MicroUnitNetwork net(net_cfg, graph);
+
+        uint32_t n_biases = 0, n_U = 0, n_V = 0, n_c = 0;
+        ifs.read(reinterpret_cast<char*>(&n_biases), sizeof(n_biases));
+        if (n_biases != net.biases().size()) return false;
+        ifs.read(reinterpret_cast<char*>(net.biases().data()), n_biases * sizeof(float));
+
+        ifs.read(reinterpret_cast<char*>(&n_U), sizeof(n_U));
+        if (n_U != net.input_weights().size()) return false;
+        ifs.read(reinterpret_cast<char*>(net.input_weights().data()), n_U * sizeof(float));
+
+        ifs.read(reinterpret_cast<char*>(&n_V), sizeof(n_V));
+        if (n_V != net.output_weights().size()) return false;
+        ifs.read(reinterpret_cast<char*>(net.output_weights().data()), n_V * sizeof(float));
+
+        ifs.read(reinterpret_cast<char*>(&n_c), sizeof(n_c));
+        if (n_c != net.output_biases().size()) return false;
+        ifs.read(reinterpret_cast<char*>(net.output_biases().data()), n_c * sizeof(float));
+
+        std::string err;
+        if (!net.validate(err)) {
+            return false;
+        }
+
+        out_net = std::move(net);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 } // namespace spark

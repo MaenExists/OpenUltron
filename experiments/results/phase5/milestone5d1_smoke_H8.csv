@@ -1,0 +1,4 @@
+model_name,mode,horizon,episodes,total_steps,overall_step_acc,complete_traj_acc,final_pos_acc,mean_manhattan,mean_ce,inference_sec
+GroundTruth_Oracle,teacher-forced,8,100,800,1.0000,1.0000,1.0000,0.000,0.0000,0.000
+SPARK (Teacher-Forced),teacher-forced,8,100,800,0.9688,0.8400,1.0000,0.041,0.1346,0.021
+SPARK (Open-Loop Autoregressive),open-loop,8,100,800,0.8725,0.8400,0.8600,0.262,1.6793,0.019

@@ -73,6 +73,10 @@ public:
     size_t memory_bytes() const;
     size_t parameter_count() const;
 
+    // Checkpoint serialization & deserialization
+    bool save_checkpoint(const std::string& filepath) const;
+    static bool load_checkpoint(const std::string& filepath, MicroUnitNetwork& out_net);
+
 private:
     void initialize_parameters(Random& rng);
 
