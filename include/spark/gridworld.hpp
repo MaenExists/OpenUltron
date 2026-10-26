@@ -10,6 +10,8 @@
 
 namespace spark {
 
+class MicroUnitNetwork;
+
 enum class Action : uint8_t {
     Up = 0,
     Down = 1,
@@ -69,6 +71,77 @@ struct LayoutSplits {
     }
 };
 
+// Comprehensive evaluation diagnostics for world model transitions
+struct WorldModelMetrics {
+    std::string model_name = "SPARK";
+    size_t total_transitions = 0;
+    size_t correct_transitions = 0;
+    double total_loss = 0.0;
+
+    size_t successful_moves_total = 0;
+    size_t successful_moves_correct = 0;
+
+    size_t blocked_moves_total = 0;
+    size_t blocked_moves_correct = 0;
+
+    size_t boundary_blocks_total = 0;
+    size_t boundary_blocks_correct = 0;
+
+    size_t obstacle_blocks_total = 0;
+    size_t obstacle_blocks_correct = 0;
+
+    double inference_seconds = 0.0;
+
+    float overall_accuracy() const {
+        return (total_transitions > 0) ? static_cast<float>(correct_transitions) / total_transitions : 0.0f;
+    }
+    float mean_loss() const {
+        return (total_transitions > 0) ? static_cast<float>(total_loss / total_transitions) : 0.0f;
+    }
+    float successful_move_accuracy() const {
+        return (successful_moves_total > 0) ? static_cast<float>(successful_moves_correct) / successful_moves_total : 0.0f;
+    }
+    float blocked_move_accuracy() const {
+        return (blocked_moves_total > 0) ? static_cast<float>(blocked_moves_correct) / blocked_moves_total : 0.0f;
+    }
+    float boundary_block_accuracy() const {
+        return (boundary_blocks_total > 0) ? static_cast<float>(boundary_blocks_correct) / boundary_blocks_total : 0.0f;
+    }
+    float obstacle_block_accuracy() const {
+        return (obstacle_blocks_total > 0) ? static_cast<float>(obstacle_blocks_correct) / obstacle_blocks_total : 0.0f;
+    }
+
+    void print_summary() const;
+};
+
+struct Milestone5bRecord {
+    std::string experiment_id;
+    uint64_t seed = 42;
+    std::string task = "gridworld-transition";
+    std::string trainer = "exact_tbptt";
+    uint32_t units = 128;
+    uint32_t fan_in = 8;
+    size_t training_examples = 0;
+    size_t test_examples = 0;
+    float obstacle_density = 0.2f;
+    std::string visibility_mode = "fully_observable";
+    uint32_t rollout_horizon = 1;
+    float train_loss = 0.0f;
+    float validation_loss = 0.0f;
+    float test_loss = 0.0f;
+    float next_state_accuracy = 0.0f;
+    float successful_move_acc = 0.0f;
+    float blocked_move_acc = 0.0f;
+    float boundary_collision_acc = 0.0f;
+    float obstacle_collision_acc = 0.0f;
+    double training_seconds = 0.0;
+    double inference_seconds = 0.0;
+    size_t model_bytes = 0;
+
+    std::string to_csv() const;
+    static std::string csv_header();
+};
+
 class GridWorldEnv : public Environment {
 public:
     static constexpr uint32_t DEFAULT_WIDTH = 5;
@@ -92,6 +165,13 @@ public:
         GridObservationMode obs_mode = GridObservationMode::FullyObservable
     );
 
+    GridWorldEnv(
+        const std::vector<GridWorldLayout>& layouts,
+        uint32_t episode_length = 50,
+        uint64_t seed = 42ULL,
+        GridObservationMode obs_mode = GridObservationMode::FullyObservable
+    );
+
     // Environment interface
     void reset() override;
     Observation get_observation() const override;
@@ -107,6 +187,9 @@ public:
 
     // Grid-World specific operations
     void load_layout(const GridWorldLayout& layout);
+    void set_layouts(const std::vector<GridWorldLayout>& layouts);
+    const std::vector<GridWorldLayout>& layouts() const { return layouts_; }
+
     void set_agent_position(uint32_t pos);
     uint32_t agent_position() const { return agent_pos_; }
     uint32_t next_position() const { return next_pos_; }
@@ -158,6 +241,9 @@ private:
     Random rng_;
     GridObservationMode obs_mode_;
 
+    std::vector<GridWorldLayout> layouts_;
+    size_t current_layout_idx_ = 0;
+
     GridWorldLayout layout_;
     uint32_t agent_pos_ = 0;
     Action current_action_ = Action::Stay;
@@ -167,5 +253,25 @@ private:
     uint32_t step_idx_ = 0;
     bool pos_observed_ = true;
 };
+
+// Evaluation functions
+WorldModelMetrics evaluate_world_model(
+    MicroUnitNetwork& net,
+    GridWorldEnv& env,
+    uint32_t total_transitions
+);
+
+struct BaselineSuiteResults {
+    WorldModelMetrics random_predictor;
+    WorldModelMetrics copy_current_predictor;
+    WorldModelMetrics naive_movement_predictor;
+    WorldModelMetrics ground_truth_oracle;
+};
+
+BaselineSuiteResults evaluate_all_baselines(
+    GridWorldEnv& env,
+    uint32_t total_transitions,
+    uint64_t seed = 42ULL
+);
 
 } // namespace spark

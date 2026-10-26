@@ -59,6 +59,17 @@ public:
     LossType loss_type() const { return loss_type_; }
     void set_loss_type(LossType type) { loss_type_ = type; }
 
+    void set_train_recurrent(bool enabled) { train_recurrent_ = enabled; }
+    void set_train_input(bool enabled) { train_input_ = enabled; }
+    void set_train_biases(bool enabled) { train_biases_ = enabled; }
+    void set_train_readout(bool enabled) { train_readout_ = enabled; }
+    void set_readout_only(bool readout_only) {
+        train_recurrent_ = !readout_only;
+        train_input_ = !readout_only;
+        train_biases_ = !readout_only;
+        train_readout_ = true;
+    }
+
 private:
     MicroUnitNetwork& net_;
     Environment& train_env_;
@@ -66,6 +77,10 @@ private:
     float learning_rate_;
     float max_grad_norm_;
     LossType loss_type_ = LossType::BinaryCrossEntropy;
+    bool train_recurrent_ = true;
+    bool train_input_ = true;
+    bool train_biases_ = true;
+    bool train_readout_ = true;
 };
 
 } // namespace spark

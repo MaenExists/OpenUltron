@@ -870,4 +870,254 @@ std::vector<ExperimentRecord> ExperimentRunner::run_local_ablation_suite(
     return all_records;
 }
 
+std::vector<Milestone5bRecord> ExperimentRunner::run_milestone5b_suite(
+    size_t num_seeds,
+    uint32_t train_steps,
+    uint32_t unroll_steps,
+    float lr,
+    uint32_t test_transitions,
+    const std::string& csv_path
+) {
+    std::vector<Milestone5bRecord> all_records;
+
+    std::cout << "\n================================================================================"
+              << "\n  SPARK Phase 5 Milestone 5B: World-Model Transition Learning Suite"
+              << "\n  (100 Train Layouts, 20 Val Layouts, 20 Unseen Test Layouts)"
+              << "\n  (" << num_seeds << " Seeds, " << test_transitions << " Held-Out Test Transitions / Seed)"
+              << "\n================================================================================\n" << std::endl;
+
+    // 1. Generate strictly disjoint layout dataset splits
+    std::cout << "Generating dataset splits with 0-overlap layout deduplication..." << std::flush;
+    auto splits = GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 42ULL);
+    std::cout << " done! (" << splits.train_layouts.size() << " train, "
+              << splits.val_layouts.size() << " val, "
+              << splits.test_layouts.size() << " test)\n" << std::endl;
+
+    // Compute average obstacle density on test set
+    double test_obs_sum = 0.0;
+    for (const auto& l : splits.test_layouts) {
+        test_obs_sum += static_cast<double>(l.obstacle_count()) / GridWorldEnv::NUM_CELLS;
+    }
+    float avg_test_density = static_cast<float>(test_obs_sum / splits.test_layouts.size());
+
+    // 2. Evaluate Non-Learning Baselines on Unseen Test Layouts
+    std::cout << ">>> Evaluating Non-Learning Baselines on Unseen Test Layouts (" << test_transitions << " transitions) <<<" << std::endl;
+    GridWorldEnv baseline_env(splits.test_layouts, 50, 42ULL);
+    auto baselines = evaluate_all_baselines(baseline_env, test_transitions, 42ULL);
+
+    std::cout << std::string(105, '-') << "\n"
+              << std::left << std::setw(30) << "Model / Predictor"
+              << std::right << std::setw(12) << "Overall Acc"
+              << std::setw(12) << "Succ Move"
+              << std::setw(12) << "Blocked"
+              << std::setw(12) << "Boundary"
+              << std::setw(12) << "Obstacle"
+              << std::setw(12) << "Mean Loss"
+              << "\n" << std::string(105, '-') << std::endl;
+
+    baselines.random_predictor.print_summary();
+    baselines.copy_current_predictor.print_summary();
+    baselines.naive_movement_predictor.print_summary();
+    baselines.ground_truth_oracle.print_summary();
+
+    // Record baselines
+    auto record_baseline = [&](const WorldModelMetrics& m, const std::string& name) {
+        Milestone5bRecord rec;
+        rec.experiment_id = "baseline_" + name;
+        rec.seed = 42;
+        rec.task = "gridworld-transition";
+        rec.trainer = "none";
+        rec.units = 0;
+        rec.fan_in = 0;
+        rec.training_examples = 0;
+        rec.test_examples = test_transitions;
+        rec.obstacle_density = avg_test_density;
+        rec.visibility_mode = "fully_observable";
+        rec.rollout_horizon = 1;
+        rec.train_loss = 0.0f;
+        rec.validation_loss = 0.0f;
+        rec.test_loss = m.mean_loss();
+        rec.next_state_accuracy = m.overall_accuracy();
+        rec.successful_move_acc = m.successful_move_accuracy();
+        rec.blocked_move_acc = m.blocked_move_accuracy();
+        rec.boundary_collision_acc = m.boundary_block_accuracy();
+        rec.obstacle_collision_acc = m.obstacle_block_accuracy();
+        rec.training_seconds = 0.0;
+        rec.inference_seconds = m.inference_seconds;
+        rec.model_bytes = 0;
+        all_records.push_back(rec);
+    };
+
+    record_baseline(baselines.random_predictor, "random");
+    record_baseline(baselines.copy_current_predictor, "copy_current");
+    record_baseline(baselines.naive_movement_predictor, "naive_movement");
+    record_baseline(baselines.ground_truth_oracle, "ground_truth_oracle");
+
+    std::cout << std::string(105, '-') << "\n" << std::endl;
+
+    // 3. Train and Evaluate Readout-Only SPARK (Baseline 5)
+    std::cout << ">>> Training Readout-Only SPARK (Frozen Recurrent Graph & Input Weights) <<<" << std::endl;
+    {
+        uint64_t seed = 42ULL;
+        SparseGraphConfig g_cfg;
+        g_cfg.num_units = 128;
+        g_cfg.fan_in = 8;
+        g_cfg.seed = seed;
+
+        NetworkConfig n_cfg;
+        n_cfg.num_units = 128;
+        n_cfg.input_dim = 55;
+        n_cfg.output_dim = 25;
+        n_cfg.alpha = 0.8f;
+        n_cfg.beta = 1.0f;
+        n_cfg.seed = seed;
+
+        MicroUnitNetwork net(n_cfg, g_cfg);
+        GridWorldEnv train_env(splits.train_layouts, 50, seed);
+        GridWorldEnv val_env(splits.val_layouts, 50, seed + 1000ULL);
+        GridWorldEnv test_env(splits.test_layouts, 50, seed + 2000ULL);
+
+        Trainer trainer(net, train_env, &val_env, lr, 1.0f);
+        trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+        trainer.set_readout_only(true);
+
+        TrainSummary summary = trainer.train(train_steps, unroll_steps, 0, true);
+        WorldModelMetrics m = evaluate_world_model(net, test_env, test_transitions);
+        m.model_name = "5. Readout-Only SPARK";
+        m.print_summary();
+
+        Milestone5bRecord rec;
+        rec.experiment_id = "readout_only_s" + std::to_string(seed);
+        rec.seed = seed;
+        rec.task = "gridworld-transition";
+        rec.trainer = "readout_only";
+        rec.units = 128;
+        rec.fan_in = 8;
+        rec.training_examples = static_cast<size_t>(train_steps) * unroll_steps;
+        rec.test_examples = test_transitions;
+        rec.obstacle_density = avg_test_density;
+        rec.visibility_mode = "fully_observable";
+        rec.rollout_horizon = 1;
+        rec.train_loss = summary.final_train_loss;
+        rec.validation_loss = summary.final_eval_loss;
+        rec.test_loss = m.mean_loss();
+        rec.next_state_accuracy = m.overall_accuracy();
+        rec.successful_move_acc = m.successful_move_accuracy();
+        rec.blocked_move_acc = m.blocked_move_accuracy();
+        rec.boundary_collision_acc = m.boundary_block_accuracy();
+        rec.obstacle_collision_acc = m.obstacle_block_accuracy();
+        rec.training_seconds = summary.total_seconds;
+        rec.inference_seconds = m.inference_seconds;
+        rec.model_bytes = net.memory_bytes();
+        all_records.push_back(rec);
+    }
+    std::cout << std::string(105, '-') << "\n" << std::endl;
+
+    // 4. Train and Evaluate SPARK with Exact TBPTT Across Multiple Seeds
+    std::cout << ">>> Training SPARK World Model (Exact TBPTT) Across " << num_seeds << " Seeds <<<" << std::endl;
+    std::cout << std::string(105, '-') << "\n"
+              << std::left << std::setw(30) << "Seed / Run ID"
+              << std::right << std::setw(12) << "Overall Acc"
+              << std::setw(12) << "Succ Move"
+              << std::setw(12) << "Blocked"
+              << std::setw(12) << "Boundary"
+              << std::setw(12) << "Obstacle"
+              << std::setw(12) << "Test Loss"
+              << "\n" << std::string(105, '-') << std::endl;
+
+    double acc_sum = 0.0;
+    double succ_sum = 0.0;
+    double block_sum = 0.0;
+    double bound_sum = 0.0;
+    double obs_sum = 0.0;
+    double loss_sum = 0.0;
+
+    for (size_t s = 0; s < num_seeds; ++s) {
+        uint64_t seed = 42ULL + s * 17ULL;
+
+        SparseGraphConfig g_cfg;
+        g_cfg.num_units = 128;
+        g_cfg.fan_in = 8;
+        g_cfg.seed = seed;
+
+        NetworkConfig n_cfg;
+        n_cfg.num_units = 128;
+        n_cfg.input_dim = 55;
+        n_cfg.output_dim = 25;
+        n_cfg.alpha = 0.8f;
+        n_cfg.beta = 1.0f;
+        n_cfg.seed = seed;
+
+        MicroUnitNetwork net(n_cfg, g_cfg);
+        GridWorldEnv train_env(splits.train_layouts, 50, seed);
+        GridWorldEnv val_env(splits.val_layouts, 50, seed + 1000ULL);
+        GridWorldEnv test_env(splits.test_layouts, 50, seed + 2000ULL);
+
+        Trainer trainer(net, train_env, &val_env, lr, 1.0f);
+        trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+
+        TrainSummary summary = trainer.train(train_steps, unroll_steps, 0, true);
+        WorldModelMetrics m = evaluate_world_model(net, test_env, test_transitions);
+        m.model_name = "SPARK_TBPTT (Seed " + std::to_string(seed) + ")";
+        m.print_summary();
+
+        acc_sum += m.overall_accuracy();
+        succ_sum += m.successful_move_accuracy();
+        block_sum += m.blocked_move_accuracy();
+        bound_sum += m.boundary_block_accuracy();
+        obs_sum += m.obstacle_block_accuracy();
+        loss_sum += m.mean_loss();
+
+        Milestone5bRecord rec;
+        rec.experiment_id = "spark_tbptt_s" + std::to_string(seed);
+        rec.seed = seed;
+        rec.task = "gridworld-transition";
+        rec.trainer = "exact_tbptt";
+        rec.units = 128;
+        rec.fan_in = 8;
+        rec.training_examples = static_cast<size_t>(train_steps) * unroll_steps;
+        rec.test_examples = test_transitions;
+        rec.obstacle_density = avg_test_density;
+        rec.visibility_mode = "fully_observable";
+        rec.rollout_horizon = 1;
+        rec.train_loss = summary.final_train_loss;
+        rec.validation_loss = summary.final_eval_loss;
+        rec.test_loss = m.mean_loss();
+        rec.next_state_accuracy = m.overall_accuracy();
+        rec.successful_move_acc = m.successful_move_accuracy();
+        rec.blocked_move_acc = m.blocked_move_accuracy();
+        rec.boundary_collision_acc = m.boundary_block_accuracy();
+        rec.obstacle_collision_acc = m.obstacle_block_accuracy();
+        rec.training_seconds = summary.total_seconds;
+        rec.inference_seconds = m.inference_seconds;
+        rec.model_bytes = net.memory_bytes();
+        all_records.push_back(rec);
+    }
+
+    std::cout << std::string(105, '=') << "\n"
+              << std::left << std::setw(30) << "SPARK Mean (" + std::to_string(num_seeds) + " seeds)"
+              << std::right << std::fixed << std::setprecision(2)
+              << std::setw(12) << ((acc_sum / num_seeds) * 100.0f) << "%"
+              << std::setw(12) << ((succ_sum / num_seeds) * 100.0f) << "%"
+              << std::setw(12) << ((block_sum / num_seeds) * 100.0f) << "%"
+              << std::setw(12) << ((bound_sum / num_seeds) * 100.0f) << "%"
+              << std::setw(12) << ((obs_sum / num_seeds) * 100.0f) << "%"
+              << std::setprecision(4) << std::setw(12) << (loss_sum / num_seeds)
+              << "\n" << std::string(105, '=') << "\n" << std::endl;
+
+    // Export CSV
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << Milestone5bRecord::csv_header() << "\n";
+            for (const auto& r : all_records) {
+                ofs << r.to_csv() << "\n";
+            }
+            std::cout << "Exported " << all_records.size() << " experimental runs to " << csv_path << std::endl;
+        }
+    }
+
+    return all_records;
+}
+
 } // namespace spark

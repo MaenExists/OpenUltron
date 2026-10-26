@@ -1,0 +1,11 @@
+experiment_id,seed,task,trainer,units,fan_in,training_examples,test_examples,obstacle_density,visibility_mode,rollout_horizon,train_loss,validation_loss,test_loss,next_state_accuracy,successful_move_acc,blocked_move_acc,boundary_collision_acc,obstacle_collision_acc,training_seconds,inference_seconds,model_bytes
+baseline_random,42,gridworld-transition,none,0,0,0,10000,0.204,fully_observable,1,0.00000,0.00000,3.21888,0.0428,0.0453,0.0403,0.0376,0.0430,0.000,0.000,0
+baseline_copy_current,42,gridworld-transition,none,0,0,0,10000,0.204,fully_observable,1,0.00000,0.00000,7.55100,0.4966,0.0000,1.0000,1.0000,1.0000,0.000,0.000,0
+baseline_naive_movement,42,gridworld-transition,none,0,0,0,10000,0.204,fully_observable,1,0.00000,0.00000,2.09250,0.8605,1.0000,0.7191,1.0000,0.0000,0.000,0.000,0
+baseline_ground_truth_oracle,42,gridworld-transition,none,0,0,0,10000,0.204,fully_observable,1,0.00000,0.00000,0.00000,1.0000,1.0000,1.0000,1.0000,1.0000,0.000,0.000,0
+readout_only_s42,42,gridworld-transition,readout_only,128,8,80000,10000,0.204,fully_observable,1,2.14823,2.40651,1.84660,0.4135,0.1550,0.6617,0.7656,0.6061,3.292,0.213,52240
+spark_tbptt_s42,42,gridworld-transition,exact_tbptt,128,8,80000,10000,0.204,fully_observable,1,1.07774,0.23989,0.37089,0.8911,0.9204,0.8630,0.9863,0.5701,3.470,0.209,52240
+spark_tbptt_s59,59,gridworld-transition,exact_tbptt,128,8,80000,10000,0.204,fully_observable,1,1.08644,0.40444,0.35049,0.8863,0.9005,0.8715,0.9908,0.6391,3.415,0.216,52240
+spark_tbptt_s76,76,gridworld-transition,exact_tbptt,128,8,80000,10000,0.204,fully_observable,1,1.10304,0.64956,0.39070,0.8792,0.9095,0.8493,0.9863,0.5620,3.457,0.231,52240
+spark_tbptt_s93,93,gridworld-transition,exact_tbptt,128,8,80000,10000,0.204,fully_observable,1,1.07326,0.45236,0.42273,0.8546,0.8715,0.8381,0.9757,0.5628,3.403,0.218,52240
+spark_tbptt_s110,110,gridworld-transition,exact_tbptt,128,8,80000,10000,0.204,fully_observable,1,1.09714,0.53035,0.40050,0.8618,0.8774,0.8464,0.9737,0.5926,3.436,0.210,52240

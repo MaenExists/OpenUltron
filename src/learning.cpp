@@ -254,11 +254,13 @@ void SGDOptimizer::step(const Gradients& grads) {
         }
     };
 
-    update_vector(net_.graph().weights, grads.d_weights, v_weights_);
-    update_vector(net_.input_weights(), grads.d_U, v_U_);
-    update_vector(net_.biases(), grads.d_biases, v_biases_);
-    update_vector(net_.output_weights(), grads.d_V, v_V_);
-    update_vector(net_.output_biases(), grads.d_c, v_c_);
+    if (train_recurrent_) update_vector(net_.graph().weights, grads.d_weights, v_weights_);
+    if (train_input_) update_vector(net_.input_weights(), grads.d_U, v_U_);
+    if (train_biases_) update_vector(net_.biases(), grads.d_biases, v_biases_);
+    if (train_readout_) {
+        update_vector(net_.output_weights(), grads.d_V, v_V_);
+        update_vector(net_.output_biases(), grads.d_c, v_c_);
+    }
 }
 
 GradientCheckResult verify_gradients_finite_difference(

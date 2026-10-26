@@ -5,6 +5,7 @@
 #include "spark/trainer.hpp"
 #include "spark/baselines.hpp"
 #include "spark/local_learning.hpp"
+#include "spark/gridworld.hpp"
 #include <string>
 #include <vector>
 
@@ -81,6 +82,16 @@ public:
         uint32_t units = 64,
         size_t num_seeds = 5,
         const std::string& csv_path = ""
+    );
+
+    // Phase 5 Milestone 5B: World-Model Transition Learning & Baselines
+    static std::vector<Milestone5bRecord> run_milestone5b_suite(
+        size_t num_seeds = 5,
+        uint32_t train_steps = 10000,
+        uint32_t unroll_steps = 8,
+        float lr = 0.02f,
+        uint32_t test_transitions = 10000,
+        const std::string& csv_path = "experiments/results/phase5/milestone5b_transitions.csv"
     );
 
     static AggregatedStats compute_aggregate(const std::vector<ExperimentRecord>& records, const std::string& name);

@@ -85,6 +85,10 @@ TrainSummary Trainer::train(
     TBPTTTrainer tbptt(net_, learning_rate_, max_grad_norm_);
     tbptt.set_loss_type(loss_type_);
     SGDOptimizer optimizer(net_, learning_rate_, 0.9f, 0.0f); // Momentum 0.9 for faster convergence
+    optimizer.set_train_recurrent(train_recurrent_);
+    optimizer.set_train_input(train_input_);
+    optimizer.set_train_biases(train_biases_);
+    optimizer.set_train_readout(train_readout_);
     Gradients grads(net_);
 
     std::vector<Observation> window_obs;

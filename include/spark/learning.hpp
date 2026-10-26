@@ -92,11 +92,21 @@ public:
     float momentum() const { return momentum_; }
     void set_momentum(float m) { momentum_ = m; }
 
+    void set_train_recurrent(bool enabled) { train_recurrent_ = enabled; }
+    void set_train_input(bool enabled) { train_input_ = enabled; }
+    void set_train_biases(bool enabled) { train_biases_ = enabled; }
+    void set_train_readout(bool enabled) { train_readout_ = enabled; }
+
 private:
     MicroUnitNetwork& net_;
     float lr_;
     float momentum_;
     float weight_decay_;
+
+    bool train_recurrent_ = true;
+    bool train_input_ = true;
+    bool train_biases_ = true;
+    bool train_readout_ = true;
 
     std::vector<float> v_weights_;
     std::vector<float> v_U_;

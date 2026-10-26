@@ -1,5 +1,6 @@
 #include "spark/gridworld.hpp"
 #include "spark/learning.hpp"
+#include "spark/trainer.hpp"
 #include <iostream>
 #include <cstdlib>
 #include <cmath>
@@ -404,8 +405,51 @@ void test_env_lifecycle_and_reset() {
     std::cout << "[Test] test_env_lifecycle_and_reset PASSED." << std::endl;
 }
 
+void test_baselines_and_readout_only() {
+    std::cout << "[Test] Running test_baselines_and_readout_only..." << std::endl;
+
+    auto splits = spark::GridWorldEnv::generate_split_layouts(5, 2, 2, 3, 6, 999ULL);
+    spark::GridWorldEnv test_env(splits.test_layouts, 50, 42ULL);
+
+    auto baselines = spark::evaluate_all_baselines(test_env, 500, 42ULL);
+
+    REQUIRE(baselines.ground_truth_oracle.overall_accuracy() == 1.0f, "Oracle must have 100% accuracy");
+    REQUIRE(baselines.ground_truth_oracle.successful_move_accuracy() == 1.0f, "Oracle must have 100% move accuracy");
+    REQUIRE(baselines.ground_truth_oracle.blocked_move_accuracy() == 1.0f, "Oracle must have 100% blocked accuracy");
+
+    REQUIRE(baselines.random_predictor.overall_accuracy() < 0.15f, "Random predictor accuracy unreasonably high");
+    REQUIRE(baselines.naive_movement_predictor.overall_accuracy() > 0.60f, "Naive movement accuracy unexpectedly low");
+    REQUIRE(baselines.copy_current_predictor.overall_accuracy() > 0.20f, "Copy current accuracy unexpectedly low");
+
+    // Test Readout-Only configuration
+    spark::NetworkConfig n_cfg;
+    n_cfg.num_units = 32;
+    n_cfg.input_dim = 55;
+    n_cfg.output_dim = 25;
+    spark::SparseGraphConfig g_cfg;
+    g_cfg.num_units = 32;
+    g_cfg.fan_in = 4;
+
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+    auto initial_weights = net.graph().weights;
+    auto initial_U = net.input_weights();
+
+    spark::GridWorldEnv train_env(splits.train_layouts, 20, 123ULL);
+    spark::Trainer trainer(net, train_env);
+    trainer.set_loss_type(spark::LossType::CategoricalCrossEntropy);
+    trainer.set_readout_only(true);
+
+    trainer.train(10, 4, 0, true);
+
+    // Assert recurrent and input weights did not change
+    REQUIRE(net.graph().weights == initial_weights, "Recurrent weights modified in readout-only mode");
+    REQUIRE(net.input_weights() == initial_U, "Input weights modified in readout-only mode");
+
+    std::cout << "[Test] test_baselines_and_readout_only PASSED." << std::endl;
+}
+
 int main() {
-    std::cout << "=== Running SPARK Milestone 5A (Grid-World & Categorical Foundation) Tests ===" << std::endl;
+    std::cout << "=== Running SPARK Milestone 5A/5B (Grid-World & Transition Model) Tests ===" << std::endl;
 
     test_deterministic_transitions();
     test_boundary_collisions();
@@ -417,7 +461,8 @@ int main() {
     test_softmax_and_categorical_loss();
     test_categorical_gradient_finite_difference();
     test_env_lifecycle_and_reset();
+    test_baselines_and_readout_only();
 
-    std::cout << "All Milestone 5A tests passed successfully!" << std::endl;
+    std::cout << "All Milestone 5A/5B tests passed successfully!" << std::endl;
     return 0;
 }

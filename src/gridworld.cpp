@@ -1,4 +1,9 @@
 #include "spark/gridworld.hpp"
+#include "spark/network.hpp"
+#include "spark/learning.hpp"
+#include "spark/metrics.hpp"
+#include <iostream>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <algorithm>
@@ -24,6 +29,49 @@ uint32_t GridWorldLayout::obstacle_count() const {
         if (obs) cnt++;
     }
     return cnt;
+}
+
+void WorldModelMetrics::print_summary() const {
+    std::cout << std::left << std::setw(30) << model_name
+              << std::right << std::fixed << std::setprecision(2)
+              << std::setw(12) << (overall_accuracy() * 100.0f) << "%"
+              << std::setw(12) << (successful_move_accuracy() * 100.0f) << "%"
+              << std::setw(12) << (blocked_move_accuracy() * 100.0f) << "%"
+              << std::setw(12) << (boundary_block_accuracy() * 100.0f) << "%"
+              << std::setw(12) << (obstacle_block_accuracy() * 100.0f) << "%"
+              << std::setprecision(4) << std::setw(12) << mean_loss()
+              << std::endl;
+}
+
+std::string Milestone5bRecord::csv_header() {
+    return "experiment_id,seed,task,trainer,units,fan_in,training_examples,test_examples,obstacle_density,visibility_mode,rollout_horizon,train_loss,validation_loss,test_loss,next_state_accuracy,successful_move_acc,blocked_move_acc,boundary_collision_acc,obstacle_collision_acc,training_seconds,inference_seconds,model_bytes";
+}
+
+std::string Milestone5bRecord::to_csv() const {
+    std::ostringstream ss;
+    ss << experiment_id << ","
+       << seed << ","
+       << task << ","
+       << trainer << ","
+       << units << ","
+       << fan_in << ","
+       << training_examples << ","
+       << test_examples << ","
+       << std::fixed << std::setprecision(3) << obstacle_density << ","
+       << visibility_mode << ","
+       << rollout_horizon << ","
+       << std::setprecision(5) << train_loss << ","
+       << validation_loss << ","
+       << test_loss << ","
+       << std::setprecision(4) << next_state_accuracy << ","
+       << successful_move_acc << ","
+       << blocked_move_acc << ","
+       << boundary_collision_acc << ","
+       << obstacle_collision_acc << ","
+       << std::setprecision(3) << training_seconds << ","
+       << inference_seconds << ","
+       << model_bytes;
+    return ss.str();
 }
 
 TransitionResult GridWorldEnv::simulate_transition(
@@ -205,12 +253,40 @@ GridWorldEnv::GridWorldEnv(
     reset();
 }
 
+GridWorldEnv::GridWorldEnv(
+    const std::vector<GridWorldLayout>& layouts,
+    uint32_t episode_length,
+    uint64_t seed,
+    GridObservationMode obs_mode
+) : episode_length_(episode_length),
+    seed_(seed),
+    rng_(seed),
+    obs_mode_(obs_mode),
+    layouts_(layouts) {
+    if (layouts_.empty()) {
+        generate_default_layout();
+    } else {
+        layout_ = layouts_[0];
+    }
+    reset();
+}
+
 void GridWorldEnv::generate_default_layout() {
     layout_ = generate_random_layout(seed_, 3, 6, DEFAULT_WIDTH, DEFAULT_HEIGHT);
 }
 
 void GridWorldEnv::load_layout(const GridWorldLayout& layout) {
     layout_ = layout;
+    layouts_.clear();
+    reset();
+}
+
+void GridWorldEnv::set_layouts(const std::vector<GridWorldLayout>& layouts) {
+    layouts_ = layouts;
+    current_layout_idx_ = 0;
+    if (!layouts_.empty()) {
+        layout_ = layouts_[0];
+    }
     reset();
 }
 
@@ -265,6 +341,13 @@ void GridWorldEnv::compute_next_transition() {
 void GridWorldEnv::reset() {
     step_idx_ = 0;
     pos_observed_ = true;
+
+    // If multiple layouts are loaded, cycle through them uniformly
+    if (!layouts_.empty()) {
+        layout_ = layouts_[current_layout_idx_ % layouts_.size()];
+        current_layout_idx_++;
+    }
+
     place_agent_randomly();
     pick_random_action();
     compute_next_transition();
@@ -348,6 +431,191 @@ void GridWorldEnv::step() {
 
 bool GridWorldEnv::is_done() const {
     return step_idx_ >= episode_length_;
+}
+
+WorldModelMetrics evaluate_world_model(
+    MicroUnitNetwork& net,
+    GridWorldEnv& env,
+    uint32_t total_transitions
+) {
+    WorldModelMetrics metrics;
+    metrics.model_name = "SPARK_TBPTT";
+    metrics.total_transitions = total_transitions;
+
+    Timer timer;
+    std::vector<float> logits;
+    std::vector<float> probs;
+
+    env.reset();
+    net.reset_state();
+
+    for (uint32_t step = 0; step < total_transitions; ++step) {
+        if (env.is_done()) {
+            env.reset();
+            net.reset_state();
+        }
+
+        Observation obs = env.get_observation();
+        Target target = env.get_target();
+        const auto& trans = env.last_transition();
+
+        net.forward_step(obs.values, logits, probs, ReadoutMode::Softmax);
+
+        // Compute loss
+        float loss = TBPTTTrainer::categorical_ce_loss(logits, target.values);
+        metrics.total_loss += loss;
+
+        // Prediction via argmax
+        uint32_t pred = static_cast<uint32_t>(std::distance(probs.begin(), std::max_element(probs.begin(), probs.end())));
+        uint32_t truth = trans.to_pos;
+
+        bool correct = (pred == truth);
+        if (correct) metrics.correct_transitions++;
+
+        if (trans.moved) {
+            metrics.successful_moves_total++;
+            if (correct) metrics.successful_moves_correct++;
+        } else {
+            metrics.blocked_moves_total++;
+            if (correct) metrics.blocked_moves_correct++;
+
+            if (trans.blocked_by_boundary) {
+                metrics.boundary_blocks_total++;
+                if (correct) metrics.boundary_blocks_correct++;
+            }
+            if (trans.blocked_by_obstacle) {
+                metrics.obstacle_blocks_total++;
+                if (correct) metrics.obstacle_blocks_correct++;
+            }
+        }
+
+        env.step();
+    }
+
+    metrics.inference_seconds = timer.elapsed_seconds();
+    return metrics;
+}
+
+BaselineSuiteResults evaluate_all_baselines(
+    GridWorldEnv& env,
+    uint32_t total_transitions,
+    uint64_t seed
+) {
+    BaselineSuiteResults results;
+    results.random_predictor.model_name = "1. Random Position";
+    results.random_predictor.total_transitions = total_transitions;
+
+    results.copy_current_predictor.model_name = "2. Copy Current Position";
+    results.copy_current_predictor.total_transitions = total_transitions;
+
+    results.naive_movement_predictor.model_name = "3. Naive Move (Ignore Obs)";
+    results.naive_movement_predictor.total_transitions = total_transitions;
+
+    results.ground_truth_oracle.model_name = "4. Ground Truth Oracle";
+    results.ground_truth_oracle.total_transitions = total_transitions;
+
+    Random rng(seed);
+    std::vector<uint8_t> empty_grid(GridWorldEnv::NUM_CELLS, 0);
+
+    env.reset();
+
+    for (uint32_t step = 0; step < total_transitions; ++step) {
+        if (env.is_done()) {
+            env.reset();
+        }
+
+        const auto& trans = env.last_transition();
+        uint32_t truth = trans.to_pos;
+        uint32_t current_pos = env.agent_position();
+        Action a = env.current_action();
+
+        // 1. Random position baseline
+        uint32_t rand_pred = static_cast<uint32_t>(rng.next_u64() % GridWorldEnv::NUM_CELLS);
+        results.random_predictor.total_loss += 3.2188758; // -log(1/25)
+        bool rand_correct = (rand_pred == truth);
+        if (rand_correct) results.random_predictor.correct_transitions++;
+        if (trans.moved) {
+            results.random_predictor.successful_moves_total++;
+            if (rand_correct) results.random_predictor.successful_moves_correct++;
+        } else {
+            results.random_predictor.blocked_moves_total++;
+            if (rand_correct) results.random_predictor.blocked_moves_correct++;
+            if (trans.blocked_by_boundary) {
+                results.random_predictor.boundary_blocks_total++;
+                if (rand_correct) results.random_predictor.boundary_blocks_correct++;
+            }
+            if (trans.blocked_by_obstacle) {
+                results.random_predictor.obstacle_blocks_total++;
+                if (rand_correct) results.random_predictor.obstacle_blocks_correct++;
+            }
+        }
+
+        // 2. Copy current position baseline
+        uint32_t copy_pred = current_pos;
+        bool copy_correct = (copy_pred == truth);
+        results.copy_current_predictor.total_loss += (copy_correct ? 0.0 : 15.0);
+        if (copy_correct) results.copy_current_predictor.correct_transitions++;
+        if (trans.moved) {
+            results.copy_current_predictor.successful_moves_total++;
+            if (copy_correct) results.copy_current_predictor.successful_moves_correct++;
+        } else {
+            results.copy_current_predictor.blocked_moves_total++;
+            if (copy_correct) results.copy_current_predictor.blocked_moves_correct++;
+            if (trans.blocked_by_boundary) {
+                results.copy_current_predictor.boundary_blocks_total++;
+                if (copy_correct) results.copy_current_predictor.boundary_blocks_correct++;
+            }
+            if (trans.blocked_by_obstacle) {
+                results.copy_current_predictor.obstacle_blocks_total++;
+                if (copy_correct) results.copy_current_predictor.obstacle_blocks_correct++;
+            }
+        }
+
+        // 3. Naive movement baseline (handles boundary, ignores obstacles)
+        auto naive_trans = GridWorldEnv::simulate_transition(current_pos, a, empty_grid);
+        uint32_t naive_pred = naive_trans.to_pos;
+        bool naive_correct = (naive_pred == truth);
+        results.naive_movement_predictor.total_loss += (naive_correct ? 0.0 : 15.0);
+        if (naive_correct) results.naive_movement_predictor.correct_transitions++;
+        if (trans.moved) {
+            results.naive_movement_predictor.successful_moves_total++;
+            if (naive_correct) results.naive_movement_predictor.successful_moves_correct++;
+        } else {
+            results.naive_movement_predictor.blocked_moves_total++;
+            if (naive_correct) results.naive_movement_predictor.blocked_moves_correct++;
+            if (trans.blocked_by_boundary) {
+                results.naive_movement_predictor.boundary_blocks_total++;
+                if (naive_correct) results.naive_movement_predictor.boundary_blocks_correct++;
+            }
+            if (trans.blocked_by_obstacle) {
+                results.naive_movement_predictor.obstacle_blocks_total++;
+                if (naive_correct) results.naive_movement_predictor.obstacle_blocks_correct++;
+            }
+        }
+
+        // 4. Ground truth oracle
+        results.ground_truth_oracle.total_loss += 0.0;
+        results.ground_truth_oracle.correct_transitions++;
+        if (trans.moved) {
+            results.ground_truth_oracle.successful_moves_total++;
+            results.ground_truth_oracle.successful_moves_correct++;
+        } else {
+            results.ground_truth_oracle.blocked_moves_total++;
+            results.ground_truth_oracle.blocked_moves_correct++;
+            if (trans.blocked_by_boundary) {
+                results.ground_truth_oracle.boundary_blocks_total++;
+                results.ground_truth_oracle.boundary_blocks_correct++;
+            }
+            if (trans.blocked_by_obstacle) {
+                results.ground_truth_oracle.obstacle_blocks_total++;
+                results.ground_truth_oracle.obstacle_blocks_correct++;
+            }
+        }
+
+        env.step();
+    }
+
+    return results;
 }
 
 } // namespace spark

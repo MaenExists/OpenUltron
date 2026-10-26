@@ -58,7 +58,16 @@
     - Extended `TBPTTTrainer` and `Trainer` with `LossType::CategoricalCrossEntropy` using stable log-sum-exp and softmax readout.
     - Implemented `verify_categorical_gradients_finite_difference` with verified relative error $< 4.3 \times 10^{-5}$ across all 5 parameter groups.
     - 10-point test suite `test_gridworld` passing 100%; all 8/8 CTests passing in 0.16s.
-  - **Milestone 5B — One-step world-model learning** (Next)
+  - **Milestone 5B — One-step world-model learning** (Completed: 2026-10-26)
+    - Implemented multi-layout cycling in `GridWorldEnv` (100 train, 20 val, 20 unseen test layouts).
+    - Implemented parameter training toggle controls in `SGDOptimizer` and `Trainer` to support Readout-Only ablation.
+    - Implemented `WorldModelMetrics` with granular breakdown (successful moves, blocked moves, boundary collisions, obstacle collisions).
+    - Evaluated 4 non-learning baselines on 10,000 transitions on unseen test layouts: Random (4.28%), Copy Current (49.66%), Naive Move (86.05%), Ground-Truth Oracle (100.00%).
+    - Evaluated Readout-Only SPARK reaching 41.35% accuracy.
+    - Evaluated SPARK (TBPTT, 128 units, fan-in 8) across 5 independent seeds on 10,000 held-out transitions per seed: **87.46% ± 1.55%** overall accuracy, **98.26%** boundary collision accuracy, **89.58%** successful move accuracy, outperforming the Naive Movement baseline.
+    - Exported machine-readable results to `experiments/results/phase5/milestone5b_transitions.csv`.
+    - Unit test suite extended to 11 tests passing 100%.
+  - **Milestone 5C — Partial observability and memory** (Next)
 
 ## Pending Phases
 - Phase 6: Iterative Internal Computation
