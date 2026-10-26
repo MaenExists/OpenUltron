@@ -1581,4 +1581,441 @@ void ExperimentRunner::run_milestone5d0_diagnostic(
     }
 }
 
+static MicroUnitNetwork get_or_train_world_model(
+    uint64_t seed,
+    uint32_t train_steps,
+    const LayoutSplits& splits,
+    bool feedforward = false
+) {
+    SparseGraphConfig g_cfg;
+    g_cfg.num_units = 128;
+    g_cfg.fan_in = 8;
+    g_cfg.seed = seed;
+
+    NetworkConfig n_cfg;
+    n_cfg.num_units = 128;
+    n_cfg.input_dim = 55;
+    n_cfg.output_dim = 25;
+    n_cfg.alpha = feedforward ? 0.0f : 0.8f;
+    n_cfg.beta = feedforward ? 0.0f : 1.0f;
+    n_cfg.seed = seed;
+
+    MicroUnitNetwork net(n_cfg, g_cfg);
+    if (feedforward) {
+        std::fill(net.graph().weights.begin(), net.graph().weights.end(), 0.0f);
+    }
+
+    std::string prefix = feedforward ? "checkpoints/ff_mlp_seed_" : "checkpoints/world_model_seed_";
+    std::string ckpt_path = prefix + std::to_string(seed) + ".spark";
+
+    if (MicroUnitNetwork::load_checkpoint(ckpt_path, net)) {
+        return net;
+    }
+
+    std::cout << "Training checkpoint " << ckpt_path << " (" << (feedforward ? "Feedforward" : "SPARK TBPTT")
+              << ", " << train_steps << " steps)..." << std::flush;
+    GridWorldEnv train_env(splits.train_layouts, 50, seed);
+    GridWorldEnv val_env(splits.val_layouts, 50, seed + 1000ULL);
+
+    Trainer trainer(net, train_env, &val_env, 0.02f, 1.0f);
+    trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+    if (feedforward) {
+        trainer.set_train_recurrent(false);
+    }
+    trainer.train(train_steps, 8, 0, true);
+
+    net.save_checkpoint(ckpt_path);
+    std::cout << " saved." << std::endl;
+    return net;
+}
+
+std::vector<RolloutMetrics> ExperimentRunner::run_milestone5d2_multi_horizon(
+    size_t num_seeds,
+    const std::vector<uint32_t>& horizons,
+    uint32_t episodes_per_seed,
+    uint32_t train_steps,
+    const std::string& csv_path
+) {
+    std::cout << "\n=========================================================================================\n"
+              << "  SPARK Milestone 5D.2: Multi-Horizon Statistical Rollout Experiments\n"
+              << "  (" << num_seeds << " independent seeds, " << episodes_per_seed << " episodes/seed, 20 unseen test layouts)\n"
+              << "=========================================================================================\n" << std::endl;
+
+    auto splits = GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+    std::vector<RolloutMetrics> all_metrics;
+
+    // Train or load models for all seeds
+    std::vector<MicroUnitNetwork> models;
+    models.reserve(num_seeds);
+    for (size_t s = 0; s < num_seeds; ++s) {
+        uint64_t seed = 42ULL + s * 17ULL;
+        models.push_back(get_or_train_world_model(seed, train_steps, splits, false));
+    }
+
+    std::cout << "\nEvaluating Teacher-Forced (Mode A) vs Autoregressive Open-Loop (Mode B)...\n" << std::endl;
+
+    // Print table header
+    std::cout << std::left << std::setw(6)  << "H"
+              << std::right << std::setw(14) << "TF StepAcc"
+              << std::setw(14) << "OL StepAcc"
+              << std::setw(14) << "Divergence"
+              << std::setw(14) << "OL TrajAcc"
+              << std::setw(14) << "OL FinalAcc"
+              << std::setw(14) << "OL ManhErr"
+              << std::setw(12) << "OL CE Loss"
+              << "\n" << std::string(102, '-') << std::endl;
+
+    for (uint32_t H : horizons) {
+        double tf_acc_sum = 0.0, tf_acc_sq = 0.0;
+        double ol_acc_sum = 0.0, ol_acc_sq = 0.0;
+        double ol_traj_sum = 0.0;
+        double ol_final_sum = 0.0;
+        double ol_manh_sum = 0.0;
+        double ol_ce_sum = 0.0;
+
+        for (size_t s = 0; s < num_seeds; ++s) {
+            uint64_t seed = 42ULL + s * 17ULL;
+            auto& net = models[s];
+
+            // Mode A: Teacher-Forced
+            auto tf_m = RolloutEngine::evaluate_rollouts(
+                net, splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::TeacherForced, seed + 10000ULL
+            );
+            tf_m.seed = seed;
+            tf_m.model_name = "SPARK";
+            all_metrics.push_back(tf_m);
+
+            // Mode B: Autoregressive Open-Loop
+            auto ol_m = RolloutEngine::evaluate_rollouts(
+                net, splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::OpenLoop, seed + 10000ULL
+            );
+            ol_m.seed = seed;
+            ol_m.model_name = "SPARK";
+            all_metrics.push_back(ol_m);
+
+            // Accumulate statistics
+            float tf_acc = tf_m.overall_step_accuracy();
+            float ol_acc = ol_m.overall_step_accuracy();
+            tf_acc_sum += tf_acc;
+            tf_acc_sq += tf_acc * tf_acc;
+            ol_acc_sum += ol_acc;
+            ol_acc_sq += ol_acc * ol_acc;
+            ol_traj_sum += ol_m.complete_trajectory_accuracy();
+            ol_final_sum += ol_m.final_position_accuracy();
+            ol_manh_sum += ol_m.mean_manhattan_error();
+            ol_ce_sum += ol_m.mean_cross_entropy();
+        }
+
+        double tf_acc_mean = tf_acc_sum / num_seeds;
+        double tf_acc_std = std::sqrt(std::max(0.0, (tf_acc_sq / num_seeds) - (tf_acc_mean * tf_acc_mean)));
+
+        double ol_acc_mean = ol_acc_sum / num_seeds;
+        double ol_acc_std = std::sqrt(std::max(0.0, (ol_acc_sq / num_seeds) - (ol_acc_mean * ol_acc_mean)));
+
+        double divergence = tf_acc_mean - ol_acc_mean;
+        double ol_traj_mean = ol_traj_sum / num_seeds;
+        double ol_final_mean = ol_final_sum / num_seeds;
+        double ol_manh_mean = ol_manh_sum / num_seeds;
+        double ol_ce_mean = ol_ce_sum / num_seeds;
+
+        std::ostringstream ss_tf, ss_ol, ss_div;
+        ss_tf << std::fixed << std::setprecision(1) << (tf_acc_mean * 100.0) << "+-" << (tf_acc_std * 100.0) << "%";
+        ss_ol << std::fixed << std::setprecision(1) << (ol_acc_mean * 100.0) << "+-" << (ol_acc_std * 100.0) << "%";
+        ss_div << std::fixed << std::setprecision(2) << (divergence * 100.0) << "%";
+
+        std::cout << std::left << "H=" << std::setw(4) << H
+                  << std::right << std::setw(14) << ss_tf.str()
+                  << std::setw(14) << ss_ol.str()
+                  << std::setw(14) << ss_div.str()
+                  << std::fixed << std::setprecision(1)
+                  << std::setw(13) << (ol_traj_mean * 100.0) << "%"
+                  << std::setw(13) << (ol_final_mean * 100.0) << "%"
+                  << std::setprecision(3)
+                  << std::setw(14) << ol_manh_mean
+                  << std::setprecision(4)
+                  << std::setw(12) << ol_ce_mean
+                  << std::endl;
+    }
+    std::cout << std::string(102, '=') << "\n" << std::endl;
+
+    // Export CSV
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << RolloutMetrics::csv_header() << "\n";
+            for (const auto& m : all_metrics) {
+                ofs << m.to_csv() << "\n";
+            }
+            std::cout << "Saved multi-horizon rollout records to: " << csv_path << std::endl;
+        }
+    }
+
+    return all_metrics;
+}
+
+std::vector<RolloutMetrics> ExperimentRunner::run_milestone5d3_ablations(
+    size_t num_seeds,
+    const std::vector<uint32_t>& horizons,
+    uint32_t episodes_per_seed,
+    const std::string& csv_path
+) {
+    std::cout << "\n=========================================================================================\n"
+              << "  SPARK Milestone 5D.3: Recurrence Memory Ablations Under Open-Loop Generation\n"
+              << "  (" << num_seeds << " independent seeds, " << episodes_per_seed << " episodes/seed, 20 unseen test layouts)\n"
+              << "=========================================================================================\n" << std::endl;
+
+    auto splits = GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+    std::vector<RolloutMetrics> all_metrics;
+
+    // Load or train intact models
+    std::vector<MicroUnitNetwork> models;
+    models.reserve(num_seeds);
+    for (size_t s = 0; s < num_seeds; ++s) {
+        uint64_t seed = 42ULL + s * 17ULL;
+        models.push_back(get_or_train_world_model(seed, 20000, splits, false));
+    }
+
+    std::cout << std::left << std::setw(6)  << "H"
+              << std::right << std::setw(22) << "1. Intact Recurrent"
+              << std::setw(22) << "2. State Reset"
+              << std::setw(22) << "3. Zero Weights (W=0)"
+              << std::setw(22) << "4. Scrambled Weights"
+              << "\n" << std::string(96, '-') << std::endl;
+
+    for (uint32_t H : horizons) {
+        double intact_acc_sum = 0.0, intact_traj_sum = 0.0;
+        double reset_acc_sum = 0.0, reset_traj_sum = 0.0;
+        double zero_acc_sum = 0.0, zero_traj_sum = 0.0;
+        double scram_acc_sum = 0.0, scram_traj_sum = 0.0;
+
+        for (size_t s = 0; s < num_seeds; ++s) {
+            uint64_t seed = 42ULL + s * 17ULL;
+            auto& base_net = models[s];
+
+            // 1. Intact
+            auto m_intact = RolloutEngine::evaluate_rollouts(
+                base_net, splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::OpenLoop, seed + 10000ULL, RolloutAblation::None
+            );
+            m_intact.seed = seed;
+            m_intact.model_name = "SPARK_Intact";
+            m_intact.ablation = "none";
+            all_metrics.push_back(m_intact);
+            intact_acc_sum += m_intact.overall_step_accuracy();
+            intact_traj_sum += m_intact.complete_trajectory_accuracy();
+
+            // 2. State Reset
+            auto m_reset = RolloutEngine::evaluate_rollouts(
+                base_net, splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::OpenLoop, seed + 10000ULL, RolloutAblation::StateReset
+            );
+            m_reset.seed = seed;
+            m_reset.model_name = "SPARK_StateReset";
+            m_reset.ablation = "state-reset";
+            all_metrics.push_back(m_reset);
+            reset_acc_sum += m_reset.overall_step_accuracy();
+            reset_traj_sum += m_reset.complete_trajectory_accuracy();
+
+            // 3. Zero Recurrent
+            MicroUnitNetwork net_zero = base_net;
+            std::fill(net_zero.graph().weights.begin(), net_zero.graph().weights.end(), 0.0f);
+            auto m_zero = RolloutEngine::evaluate_rollouts(
+                net_zero, splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::OpenLoop, seed + 10000ULL, RolloutAblation::None
+            );
+            m_zero.seed = seed;
+            m_zero.model_name = "SPARK_ZeroWeights";
+            m_zero.ablation = "zero-weights";
+            all_metrics.push_back(m_zero);
+            zero_acc_sum += m_zero.overall_step_accuracy();
+            zero_traj_sum += m_zero.complete_trajectory_accuracy();
+
+            // 4. Scrambled Recurrent
+            MicroUnitNetwork net_scram = base_net;
+            Random rng(seed + 999ULL);
+            for (float& w : net_scram.graph().weights) {
+                w = rng.normal_float(0.0f, 0.5f);
+            }
+            auto m_scram = RolloutEngine::evaluate_rollouts(
+                net_scram, splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::OpenLoop, seed + 10000ULL, RolloutAblation::None
+            );
+            m_scram.seed = seed;
+            m_scram.model_name = "SPARK_ScrambledWeights";
+            m_scram.ablation = "scrambled-weights";
+            all_metrics.push_back(m_scram);
+            scram_acc_sum += m_scram.overall_step_accuracy();
+            scram_traj_sum += m_scram.complete_trajectory_accuracy();
+        }
+
+        auto fmt_entry = [](double acc, double traj) {
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(1) << (acc * 100.0) << "% (" << (traj * 100.0) << "% traj)";
+            return ss.str();
+        };
+
+        std::cout << std::left << "H=" << std::setw(4) << H
+                  << std::right << std::setw(22) << fmt_entry(intact_acc_sum / num_seeds, intact_traj_sum / num_seeds)
+                  << std::setw(22) << fmt_entry(reset_acc_sum / num_seeds, reset_traj_sum / num_seeds)
+                  << std::setw(22) << fmt_entry(zero_acc_sum / num_seeds, zero_traj_sum / num_seeds)
+                  << std::setw(22) << fmt_entry(scram_acc_sum / num_seeds, scram_traj_sum / num_seeds)
+                  << std::endl;
+    }
+    std::cout << std::string(96, '=') << "\n" << std::endl;
+
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << RolloutMetrics::csv_header() << "\n";
+            for (const auto& m : all_metrics) {
+                ofs << m.to_csv() << "\n";
+            }
+            std::cout << "Saved ablation records to: " << csv_path << std::endl;
+        }
+    }
+
+    return all_metrics;
+}
+
+std::vector<RolloutMetrics> ExperimentRunner::run_milestone5d4_controls(
+    size_t num_seeds,
+    const std::vector<uint32_t>& horizons,
+    uint32_t episodes_per_seed,
+    const std::string& csv_path
+) {
+    std::cout << "\n=========================================================================================\n"
+              << "  SPARK Milestone 5D.4: Scientific Baselines & Controls Comparison (Open-Loop)\n"
+              << "  (" << num_seeds << " independent seeds, " << episodes_per_seed << " episodes/seed, 20 unseen test layouts)\n"
+              << "=========================================================================================\n" << std::endl;
+
+    auto splits = GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+    std::vector<RolloutMetrics> all_metrics;
+
+    // Train or load SPARK recurrent models and Feedforward MLP models
+    std::vector<MicroUnitNetwork> spark_models;
+    std::vector<MicroUnitNetwork> ff_models;
+    spark_models.reserve(num_seeds);
+    ff_models.reserve(num_seeds);
+
+    for (size_t s = 0; s < num_seeds; ++s) {
+        uint64_t seed = 42ULL + s * 17ULL;
+        spark_models.push_back(get_or_train_world_model(seed, 20000, splits, false));
+        ff_models.push_back(get_or_train_world_model(seed, 20000, splits, true));
+    }
+
+    std::cout << std::left << std::setw(6)  << "H"
+              << std::right << std::setw(15) << "Oracle"
+              << std::setw(16) << "SPARK TBPTT"
+              << std::setw(16) << "Feedforward MLP"
+              << std::setw(16) << "Copy-Current"
+              << std::setw(16) << "Naive-Move"
+              << std::setw(16) << "Random Cell"
+              << "\n" << std::string(101, '-') << std::endl;
+
+    for (uint32_t H : horizons) {
+        double oracle_acc = 0.0;
+        double spark_acc = 0.0, spark_traj = 0.0;
+        double ff_acc = 0.0, ff_traj = 0.0;
+        double cc_acc = 0.0;
+        double nm_acc = 0.0;
+        double rand_acc = 0.0;
+
+        for (size_t s = 0; s < num_seeds; ++s) {
+            uint64_t seed = 42ULL + s * 17ULL;
+
+            // 1. Oracle
+            auto m_oracle = RolloutEngine::evaluate_oracle(splits.test_layouts, H, episodes_per_seed, seed + 10000ULL);
+            m_oracle.seed = seed;
+            all_metrics.push_back(m_oracle);
+            oracle_acc += m_oracle.overall_step_accuracy();
+
+            // 2. SPARK
+            auto m_spark = RolloutEngine::evaluate_rollouts(
+                spark_models[s], splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::OpenLoop, seed + 10000ULL
+            );
+            m_spark.seed = seed;
+            m_spark.model_name = "SPARK_TBPTT";
+            all_metrics.push_back(m_spark);
+            spark_acc += m_spark.overall_step_accuracy();
+            spark_traj += m_spark.complete_trajectory_accuracy();
+
+            // 3. Feedforward MLP
+            auto m_ff = RolloutEngine::evaluate_rollouts(
+                ff_models[s], splits.test_layouts, H, episodes_per_seed,
+                RolloutMode::OpenLoop, seed + 10000ULL
+            );
+            m_ff.seed = seed;
+            m_ff.model_name = "Feedforward_MLP";
+            all_metrics.push_back(m_ff);
+            ff_acc += m_ff.overall_step_accuracy();
+            ff_traj += m_ff.complete_trajectory_accuracy();
+
+            // 4. Copy-Current
+            auto m_cc = RolloutEngine::evaluate_baseline(
+                splits.test_layouts, H, episodes_per_seed,
+                RolloutBaselineType::CopyCurrent, RolloutMode::OpenLoop, seed + 10000ULL
+            );
+            m_cc.seed = seed;
+            all_metrics.push_back(m_cc);
+            cc_acc += m_cc.overall_step_accuracy();
+
+            // 5. Naive-Move
+            auto m_nm = RolloutEngine::evaluate_baseline(
+                splits.test_layouts, H, episodes_per_seed,
+                RolloutBaselineType::NaiveMove, RolloutMode::OpenLoop, seed + 10000ULL
+            );
+            m_nm.seed = seed;
+            all_metrics.push_back(m_nm);
+            nm_acc += m_nm.overall_step_accuracy();
+
+            // 6. Random Predictor
+            auto m_rand = RolloutEngine::evaluate_baseline(
+                splits.test_layouts, H, episodes_per_seed,
+                RolloutBaselineType::RandomPredictor, RolloutMode::OpenLoop, seed + 10000ULL
+            );
+            m_rand.seed = seed;
+            all_metrics.push_back(m_rand);
+            rand_acc += m_rand.overall_step_accuracy();
+        }
+
+        auto fmt_acc = [](double acc) {
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(1) << (acc * 100.0) << "%";
+            return ss.str();
+        };
+
+        auto fmt_acc_traj = [](double acc, double traj) {
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(1) << (acc * 100.0) << "% (" << (traj * 100.0) << "%)";
+            return ss.str();
+        };
+
+        std::cout << std::left << "H=" << std::setw(4) << H
+                  << std::right << std::setw(15) << fmt_acc(oracle_acc / num_seeds)
+                  << std::setw(16) << fmt_acc_traj(spark_acc / num_seeds, spark_traj / num_seeds)
+                  << std::setw(16) << fmt_acc_traj(ff_acc / num_seeds, ff_traj / num_seeds)
+                  << std::setw(16) << fmt_acc(cc_acc / num_seeds)
+                  << std::setw(16) << fmt_acc(nm_acc / num_seeds)
+                  << std::setw(16) << fmt_acc(rand_acc / num_seeds)
+                  << std::endl;
+    }
+    std::cout << std::string(101, '=') << "\n" << std::endl;
+
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << RolloutMetrics::csv_header() << "\n";
+            for (const auto& m : all_metrics) {
+                ofs << m.to_csv() << "\n";
+            }
+            std::cout << "Saved control baseline records to: " << csv_path << std::endl;
+        }
+    }
+
+    return all_metrics;
+}
+
 } // namespace spark

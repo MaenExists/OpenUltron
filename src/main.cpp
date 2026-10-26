@@ -540,6 +540,9 @@ void run_onestep_diag_cmd(int argc, char* argv[]) {
 void run_rollout_cmd(int argc, char* argv[]) {
     std::string checkpoint_path = "checkpoints/world_model_best.spark";
     std::string mode_str = "both";
+    std::string suite = "";
+    size_t num_seeds = 5;
+    uint32_t train_steps = 20000;
     uint32_t horizon = 8;
     uint32_t episodes = 100;
     uint64_t seed = 42ULL;
@@ -549,10 +552,50 @@ void run_rollout_cmd(int argc, char* argv[]) {
         std::string arg = argv[i];
         if (arg == "--checkpoint" && i + 1 < argc) checkpoint_path = argv[++i];
         else if (arg == "--mode" && i + 1 < argc) mode_str = argv[++i];
+        else if (arg == "--suite" && i + 1 < argc) suite = argv[++i];
+        else if (arg == "--seeds" && i + 1 < argc) num_seeds = std::stoul(argv[++i]);
+        else if (arg == "--steps" && i + 1 < argc) train_steps = std::stoul(argv[++i]);
         else if (arg == "--horizon" && i + 1 < argc) horizon = std::stoul(argv[++i]);
         else if (arg == "--episodes" && i + 1 < argc) episodes = std::stoul(argv[++i]);
         else if (arg == "--seed" && i + 1 < argc) seed = std::stoull(argv[++i]);
         else if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    print_banner();
+
+    if (!suite.empty()) {
+        if (suite == "multi-horizon" || suite == "5d2") {
+            spark::ExperimentRunner::run_milestone5d2_multi_horizon(
+                num_seeds, {1, 2, 4, 8, 16}, episodes, train_steps,
+                csv_path.empty() ? "experiments/results/phase5/milestone5d2_multi_horizon.csv" : csv_path
+            );
+        } else if (suite == "ablations" || suite == "5d3") {
+            spark::ExperimentRunner::run_milestone5d3_ablations(
+                num_seeds, {1, 2, 4, 8, 16}, episodes,
+                csv_path.empty() ? "experiments/results/phase5/milestone5d3_ablations.csv" : csv_path
+            );
+        } else if (suite == "controls" || suite == "5d4") {
+            spark::ExperimentRunner::run_milestone5d4_controls(
+                num_seeds, {1, 2, 4, 8, 16}, episodes,
+                csv_path.empty() ? "experiments/results/phase5/milestone5d4_controls.csv" : csv_path
+            );
+        } else if (suite == "all") {
+            spark::ExperimentRunner::run_milestone5d2_multi_horizon(
+                num_seeds, {1, 2, 4, 8, 16}, episodes, train_steps,
+                "experiments/results/phase5/milestone5d2_multi_horizon.csv"
+            );
+            spark::ExperimentRunner::run_milestone5d3_ablations(
+                num_seeds, {1, 2, 4, 8, 16}, episodes,
+                "experiments/results/phase5/milestone5d3_ablations.csv"
+            );
+            spark::ExperimentRunner::run_milestone5d4_controls(
+                num_seeds, {1, 2, 4, 8, 16}, episodes,
+                "experiments/results/phase5/milestone5d4_controls.csv"
+            );
+        } else {
+            std::cerr << "Unknown suite: '" << suite << "'. Valid options: multi-horizon, ablations, controls, all" << std::endl;
+        }
+        return;
     }
 
     if (horizon == 0) {
@@ -560,7 +603,6 @@ void run_rollout_cmd(int argc, char* argv[]) {
         return;
     }
 
-    print_banner();
     std::cout << ">>> SPARK Multi-Step Predictive Generation (Rollout Engine) <<<\n"
               << "  Mode       : " << mode_str << "\n"
               << "  Horizon    : " << horizon << "\n"

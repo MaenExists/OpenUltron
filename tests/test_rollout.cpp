@@ -204,6 +204,95 @@ void test_evaluate_oracle_multi_horizon() {
     std::cout << "[Test] test_evaluate_oracle_multi_horizon PASSED." << std::endl;
 }
 
+// 6. Test Baseline Rollouts (Copy-Current and Naive-Move)
+void test_baseline_rollouts() {
+    std::cout << "[Test] Running test_baseline_rollouts..." << std::endl;
+
+    spark::GridWorldLayout empty_layout;
+    empty_layout.width = 5;
+    empty_layout.height = 5;
+    empty_layout.obstacles.assign(25, 0);
+
+    // Initial position 12 = (2,2)
+    uint32_t start_pos = 12;
+    std::vector<spark::Action> actions = {
+        spark::Action::Right, // (2,3) = index 13
+        spark::Action::Right  // (2,4) = index 14
+    };
+
+    // Copy-Current: predicts start_pos for all steps
+    auto cc_res = spark::RolloutEngine::run_baseline_rollout(
+        empty_layout, start_pos, actions,
+        spark::RolloutBaselineType::CopyCurrent,
+        spark::RolloutMode::OpenLoop
+    );
+    REQUIRE(cc_res.steps.size() == 2, "Copy-Current step count mismatch");
+    REQUIRE(cc_res.steps[0].predicted_position == 12, "Step 0 Copy-Current must predict 12");
+    REQUIRE(cc_res.steps[1].predicted_position == 12, "Step 1 Copy-Current in open loop must predict 12");
+
+    // Naive-Move: moves Right then Right on empty grid -> (2,3) then (2,4)
+    auto nm_res = spark::RolloutEngine::run_baseline_rollout(
+        empty_layout, start_pos, actions,
+        spark::RolloutBaselineType::NaiveMove,
+        spark::RolloutMode::OpenLoop
+    );
+    REQUIRE(nm_res.steps.size() == 2, "Naive-Move step count mismatch");
+    REQUIRE(nm_res.steps[0].predicted_position == 13, "Step 0 Naive-Move should be 13");
+    REQUIRE(nm_res.steps[1].predicted_position == 14, "Step 1 Naive-Move should be 14");
+    REQUIRE(nm_res.entire_trajectory_correct, "On empty grid, Naive-Move should match Oracle");
+
+    std::cout << "[Test] test_baseline_rollouts PASSED." << std::endl;
+}
+
+// 7. Test State-Reset Ablation
+void test_state_reset_ablation() {
+    std::cout << "[Test] Running test_state_reset_ablation..." << std::endl;
+
+    spark::GridWorldLayout empty_layout;
+    empty_layout.width = 5;
+    empty_layout.height = 5;
+    empty_layout.obstacles.assign(25, 0);
+
+    spark::SparseGraphConfig g_cfg;
+    g_cfg.num_units = 32;
+    g_cfg.fan_in = 4;
+    g_cfg.seed = 42ULL;
+
+    spark::NetworkConfig n_cfg;
+    n_cfg.num_units = 32;
+    n_cfg.input_dim = 55;
+    n_cfg.output_dim = 25;
+    n_cfg.alpha = 0.9f;
+    n_cfg.beta = 0.9f;
+    n_cfg.seed = 42ULL;
+
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+
+    std::vector<spark::Action> actions = {
+        spark::Action::Right,
+        spark::Action::Down,
+        spark::Action::Left
+    };
+    uint32_t start_pos = 12;
+
+    auto res_none = spark::RolloutEngine::run_single_rollout(
+        net, empty_layout, start_pos, actions,
+        spark::RolloutMode::OpenLoop,
+        spark::RolloutAblation::None
+    );
+
+    auto res_reset = spark::RolloutEngine::run_single_rollout(
+        net, empty_layout, start_pos, actions,
+        spark::RolloutMode::OpenLoop,
+        spark::RolloutAblation::StateReset
+    );
+
+    REQUIRE(res_none.steps.size() == 3, "None steps mismatch");
+    REQUIRE(res_reset.steps.size() == 3, "Reset steps mismatch");
+
+    std::cout << "[Test] test_state_reset_ablation PASSED." << std::endl;
+}
+
 int main() {
     std::cout << "=== Running SPARK Milestone 5D.1 Rollout Engine Tests ===" << std::endl;
 
@@ -212,6 +301,8 @@ int main() {
     test_manhattan_distance();
     test_checkpoint_roundtrip();
     test_evaluate_oracle_multi_horizon();
+    test_baseline_rollouts();
+    test_state_reset_ablation();
 
     std::cout << "All Milestone 5D.1 tests passed successfully!" << std::endl;
     return 0;

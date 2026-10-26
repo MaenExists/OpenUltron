@@ -81,7 +81,15 @@
       - Ground-truth oracle achieved **100.00%** across all horizons.
     - Exported 76 experimental runs to `experiments/results/phase5/milestone5c_partial_obs.csv`.
     - Unit test suite extended to 13 tests passing 100%; all 8 CTest suites passing in 0.15s.
-  - **Milestone 5D — Predictive generation** (Next)
+  - **Milestone 5D — Predictive generation, open-loop world modeling, and error propagation** (Completed: 2026-10-26)
+    - Sub-milestone 5D.0 (Markovian Diagnosis): Investigated 1-step transition error modes; extended training to 20k steps yielding **96.82%** accuracy on unseen test layouts (100% boundary, 98.11% free moves); established feedforward MLP benchmark (99.90%).
+    - Sub-milestone 5D.1 (Rollout Engine Infrastructure): Implemented binary checkpoint serialization/deserialization (`save_checkpoint`, `load_checkpoint`); built `RolloutEngine` supporting Teacher-Forced (Mode A) and Autoregressive Open-Loop (Mode B) with deterministic oracle, zero ground-truth leakage, and CLI `spark rollout`. Added `test_rollout` unit tests (9/9 CTests passing in 0.15s).
+    - Sub-milestone 5D.2 (Multi-Horizon Statistical Experiments): Evaluated $H \in \{1, 2, 4, 8, 16\}$ across 5 seeds on 20 unseen test layouts (500 episodes / horizon). Quantified open-loop compounding error divergence growing from **0.00%** ($H=1$) to **12.99%** ($H=16$), while maintaining **66.4%** full trajectory accuracy and 0.370 Manhattan error at $H=16$.
+    - Sub-milestone 5D.3 (Recurrence Memory Ablations): Demonstrated that recurrence stabilizes open-loop generation. At $H=16$, Intact SPARK (**66.4%** traj acc) strongly outperforms State Reset (**28.0%**), Zero Weights (**22.4%**), and Scrambled Weights (**14.6%**).
+    - Sub-milestone 5D.4 (Scientific Baselines & Controls): Compared against Oracle (100%), Feedforward MLP (100% in fully observable Markov setting), Naive-Move (51.8%), Copy-Current (23.4%), and Random (4.0%).
+    - Exported empirical CSV datasets to `experiments/results/phase5/milestone5d2_multi_horizon.csv`, `milestone5d3_ablations.csv`, and `milestone5d4_controls.csv`.
+    - Documented comprehensive research findings in `docs/MILESTONE5D_FINDINGS.md`.
+  - **Milestone 5E — Goal-directed planning & active world models** (Next)
 
 ## Pending Phases
 - Phase 6: Iterative Internal Computation

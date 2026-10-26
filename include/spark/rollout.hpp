@@ -22,6 +22,36 @@ inline const char* rollout_mode_to_string(RolloutMode mode) {
     return "unknown";
 }
 
+enum class RolloutAblation {
+    None,
+    StateReset
+};
+
+inline const char* rollout_ablation_to_string(RolloutAblation abl) {
+    switch (abl) {
+        case RolloutAblation::None: return "none";
+        case RolloutAblation::StateReset: return "state-reset";
+    }
+    return "unknown";
+}
+
+enum class RolloutBaselineType {
+    Oracle,
+    CopyCurrent,
+    NaiveMove,
+    RandomPredictor
+};
+
+inline const char* rollout_baseline_to_string(RolloutBaselineType b) {
+    switch (b) {
+        case RolloutBaselineType::Oracle: return "oracle";
+        case RolloutBaselineType::CopyCurrent: return "copy-current";
+        case RolloutBaselineType::NaiveMove: return "naive-move";
+        case RolloutBaselineType::RandomPredictor: return "random-predictor";
+    }
+    return "unknown";
+}
+
 struct RolloutStep {
     uint32_t step_index = 0;
     uint32_t predicted_position = 0;
@@ -45,6 +75,8 @@ struct RolloutResult {
 struct RolloutMetrics {
     std::string model_name;
     RolloutMode mode = RolloutMode::TeacherForced;
+    std::string ablation = "none";
+    uint64_t seed = 42ULL;
     uint32_t horizon = 1;
     size_t total_episodes = 0;
     size_t total_steps = 0;
@@ -99,7 +131,8 @@ public:
         const GridWorldLayout& layout,
         uint32_t start_pos,
         const std::vector<Action>& actions,
-        RolloutMode mode
+        RolloutMode mode,
+        RolloutAblation ablation = RolloutAblation::None
     );
 
     static RolloutResult run_oracle_rollout(
@@ -108,19 +141,38 @@ public:
         const std::vector<Action>& actions
     );
 
+    static RolloutResult run_baseline_rollout(
+        const GridWorldLayout& layout,
+        uint32_t start_pos,
+        const std::vector<Action>& actions,
+        RolloutBaselineType baseline,
+        RolloutMode mode,
+        Random* rng = nullptr
+    );
+
     static RolloutMetrics evaluate_rollouts(
         MicroUnitNetwork& net,
         const std::vector<GridWorldLayout>& layouts,
         uint32_t horizon,
         uint32_t num_episodes,
         RolloutMode mode,
-        uint64_t seed = 42ULL
+        uint64_t seed = 42ULL,
+        RolloutAblation ablation = RolloutAblation::None
     );
 
     static RolloutMetrics evaluate_oracle(
         const std::vector<GridWorldLayout>& layouts,
         uint32_t horizon,
         uint32_t num_episodes,
+        uint64_t seed = 42ULL
+    );
+
+    static RolloutMetrics evaluate_baseline(
+        const std::vector<GridWorldLayout>& layouts,
+        uint32_t horizon,
+        uint32_t num_episodes,
+        RolloutBaselineType baseline,
+        RolloutMode mode,
         uint64_t seed = 42ULL
     );
 

@@ -30,7 +30,8 @@ RolloutResult RolloutEngine::run_single_rollout(
     const GridWorldLayout& layout,
     uint32_t start_pos,
     const std::vector<Action>& actions,
-    RolloutMode mode
+    RolloutMode mode,
+    RolloutAblation ablation
 ) {
     RolloutResult res;
     res.initial_position = start_pos;
@@ -48,6 +49,11 @@ RolloutResult RolloutEngine::run_single_rollout(
 
     for (uint32_t t = 0; t < actions.size(); ++t) {
         Action a = actions[t];
+
+        // Memory ablation: clear recurrent state prior to step
+        if (ablation == RolloutAblation::StateReset) {
+            net.reset_state();
+        }
 
         // 1. Advance ground-truth simulator to obtain actual target
         auto actual_trans = GridWorldEnv::simulate_transition(
@@ -80,7 +86,7 @@ RolloutResult RolloutEngine::run_single_rollout(
             x[2 * GridWorldEnv::NUM_CELLS + a_idx] = 1.0f;
         }
 
-        // 3. Model forward step (preserves recurrent state h_t)
+        // 3. Model forward step (preserves recurrent state h_t unless ablated)
         net.forward_step(x, logits, probs, ReadoutMode::Softmax);
 
         // 4. Argmax prediction
@@ -170,17 +176,110 @@ RolloutResult RolloutEngine::run_oracle_rollout(
     return res;
 }
 
+RolloutResult RolloutEngine::run_baseline_rollout(
+    const GridWorldLayout& layout,
+    uint32_t start_pos,
+    const std::vector<Action>& actions,
+    RolloutBaselineType baseline,
+    RolloutMode mode,
+    Random* rng
+) {
+    RolloutResult res;
+    res.initial_position = start_pos;
+    res.entire_trajectory_correct = true;
+    res.steps.reserve(actions.size());
+
+    uint32_t current_actual_pos = start_pos;
+    uint32_t current_input_pos = start_pos;
+
+    for (uint32_t t = 0; t < actions.size(); ++t) {
+        Action a = actions[t];
+
+        auto actual_trans = GridWorldEnv::simulate_transition(
+            current_actual_pos,
+            a,
+            layout.obstacles,
+            layout.width,
+            layout.height
+        );
+        uint32_t actual_next_pos = actual_trans.to_pos;
+
+        uint32_t pred_pos = current_input_pos;
+        if (baseline == RolloutBaselineType::Oracle) {
+            pred_pos = actual_next_pos;
+        } else if (baseline == RolloutBaselineType::CopyCurrent) {
+            pred_pos = current_input_pos;
+        } else if (baseline == RolloutBaselineType::NaiveMove) {
+            int r = static_cast<int>(current_input_pos / layout.width);
+            int c = static_cast<int>(current_input_pos % layout.width);
+            switch (a) {
+                case Action::Up:    if (r > 0) r--; break;
+                case Action::Down:  if (r + 1 < static_cast<int>(layout.height)) r++; break;
+                case Action::Left:  if (c > 0) c--; break;
+                case Action::Right: if (c + 1 < static_cast<int>(layout.width)) c++; break;
+                case Action::Stay:  break;
+            }
+            pred_pos = static_cast<uint32_t>(r * layout.width + c);
+        } else if (baseline == RolloutBaselineType::RandomPredictor) {
+            if (rng) {
+                pred_pos = static_cast<uint32_t>(rng->next_u64() % GridWorldEnv::NUM_CELLS);
+            } else {
+                pred_pos = 0;
+            }
+        }
+
+        bool correct = (pred_pos == actual_next_pos);
+        if (!correct) {
+            res.entire_trajectory_correct = false;
+        }
+
+        uint32_t dist = compute_manhattan_distance(pred_pos, actual_next_pos, layout.width);
+        float ce = correct ? 0.0f : 3.21887f;
+        if (baseline == RolloutBaselineType::RandomPredictor) {
+            ce = 3.21887f;
+        }
+
+        res.total_manhattan_error += dist;
+        res.total_cross_entropy += ce;
+
+        RolloutStep step;
+        step.step_index = t;
+        step.predicted_position = pred_pos;
+        step.actual_position = actual_next_pos;
+        step.target_probability = correct ? 1.0f : 0.0f;
+        step.cross_entropy = ce;
+        step.correct = correct;
+        step.manhattan_error = dist;
+        res.steps.push_back(step);
+
+        res.final_predicted_position = pred_pos;
+        res.final_actual_position = actual_next_pos;
+
+        current_actual_pos = actual_next_pos;
+        if (mode == RolloutMode::TeacherForced) {
+            current_input_pos = actual_next_pos;
+        } else {
+            current_input_pos = pred_pos;
+        }
+    }
+
+    return res;
+}
+
 RolloutMetrics RolloutEngine::evaluate_rollouts(
     MicroUnitNetwork& net,
     const std::vector<GridWorldLayout>& layouts,
     uint32_t horizon,
     uint32_t num_episodes,
     RolloutMode mode,
-    uint64_t seed
+    uint64_t seed,
+    RolloutAblation ablation
 ) {
     RolloutMetrics metrics;
     metrics.model_name = "SPARK";
     metrics.mode = mode;
+    metrics.ablation = rollout_ablation_to_string(ablation);
+    metrics.seed = seed;
     metrics.horizon = horizon;
     metrics.total_episodes = num_episodes;
 
@@ -211,7 +310,7 @@ RolloutMetrics RolloutEngine::evaluate_rollouts(
         uint32_t start_pos = free_cells[rng.next_u64() % free_cells.size()];
         auto actions = generate_action_sequence(horizon, rng);
 
-        RolloutResult res = run_single_rollout(net, layout, start_pos, actions, mode);
+        RolloutResult res = run_single_rollout(net, layout, start_pos, actions, mode, ablation);
 
         metrics.total_steps += res.steps.size();
         metrics.total_manhattan_error += res.total_manhattan_error;
@@ -240,15 +339,19 @@ RolloutMetrics RolloutEngine::evaluate_rollouts(
     return metrics;
 }
 
-RolloutMetrics RolloutEngine::evaluate_oracle(
+RolloutMetrics RolloutEngine::evaluate_baseline(
     const std::vector<GridWorldLayout>& layouts,
     uint32_t horizon,
     uint32_t num_episodes,
+    RolloutBaselineType baseline,
+    RolloutMode mode,
     uint64_t seed
 ) {
     RolloutMetrics metrics;
-    metrics.model_name = "GroundTruth_Oracle";
-    metrics.mode = RolloutMode::TeacherForced;
+    metrics.model_name = rollout_baseline_to_string(baseline);
+    metrics.mode = mode;
+    metrics.ablation = "none";
+    metrics.seed = seed;
     metrics.horizon = horizon;
     metrics.total_episodes = num_episodes;
 
@@ -273,21 +376,40 @@ RolloutMetrics RolloutEngine::evaluate_oracle(
         uint32_t start_pos = free_cells[rng.next_u64() % free_cells.size()];
         auto actions = generate_action_sequence(horizon, rng);
 
-        RolloutResult res = run_oracle_rollout(layout, start_pos, actions);
+        RolloutResult res = run_baseline_rollout(layout, start_pos, actions, baseline, mode, &rng);
 
         metrics.total_steps += res.steps.size();
+        metrics.total_manhattan_error += res.total_manhattan_error;
+        metrics.total_cross_entropy += res.total_cross_entropy;
+
         if (res.entire_trajectory_correct) metrics.complete_trajectories_correct++;
         if (res.final_predicted_position == res.final_actual_position) metrics.correct_final_positions++;
 
         for (uint32_t t = 0; t < res.steps.size(); ++t) {
+            const auto& st = res.steps[t];
             metrics.step_total[t]++;
-            metrics.correct_steps++;
-            metrics.step_correct[t]++;
+            metrics.step_manhattan[t] += st.manhattan_error;
+            metrics.step_cross_entropy[t] += st.cross_entropy;
+            if (st.correct) {
+                metrics.correct_steps++;
+                metrics.step_correct[t]++;
+            }
         }
     }
 
     metrics.inference_seconds = timer.elapsed_seconds();
     return metrics;
+}
+
+RolloutMetrics RolloutEngine::evaluate_oracle(
+    const std::vector<GridWorldLayout>& layouts,
+    uint32_t horizon,
+    uint32_t num_episodes,
+    uint64_t seed
+) {
+    auto m = evaluate_baseline(layouts, horizon, num_episodes, RolloutBaselineType::Oracle, RolloutMode::TeacherForced, seed);
+    m.model_name = "GroundTruth_Oracle";
+    return m;
 }
 
 void RolloutMetrics::print_summary() const {
@@ -312,13 +434,15 @@ void RolloutMetrics::print_summary() const {
 }
 
 std::string RolloutMetrics::csv_header() {
-    return "model_name,mode,horizon,episodes,total_steps,overall_step_acc,complete_traj_acc,final_pos_acc,mean_manhattan,mean_ce,inference_sec";
+    return "seed,model_name,mode,ablation,horizon,episodes,total_steps,overall_step_acc,complete_traj_acc,final_pos_acc,mean_manhattan,mean_ce,inference_sec";
 }
 
 std::string RolloutMetrics::to_csv() const {
     std::ostringstream ss;
-    ss << model_name << ","
+    ss << seed << ","
+       << model_name << ","
        << rollout_mode_to_string(mode) << ","
+       << ablation << ","
        << horizon << ","
        << total_episodes << ","
        << total_steps << ","
@@ -327,7 +451,7 @@ std::string RolloutMetrics::to_csv() const {
        << final_position_accuracy() << ","
        << std::setprecision(3) << mean_manhattan_error() << ","
        << std::setprecision(4) << mean_cross_entropy() << ","
-       << std::setprecision(3) << inference_seconds;
+       << std::setprecision(4) << inference_seconds;
     return ss.str();
 }
 

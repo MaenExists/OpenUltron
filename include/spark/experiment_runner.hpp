@@ -6,6 +6,7 @@
 #include "spark/baselines.hpp"
 #include "spark/local_learning.hpp"
 #include "spark/gridworld.hpp"
+#include "spark/rollout.hpp"
 #include <string>
 #include <vector>
 
@@ -111,6 +112,31 @@ public:
         float lr = 0.02f,
         uint64_t seed = 42ULL,
         const std::string& csv_path = "experiments/results/phase5/milestone5d0_investigation.csv"
+    );
+
+    // Phase 5 Milestone 5D.2: Multi-Horizon Statistical Experiments (H in {1, 2, 4, 8, 16})
+    static std::vector<RolloutMetrics> run_milestone5d2_multi_horizon(
+        size_t num_seeds = 5,
+        const std::vector<uint32_t>& horizons = {1, 2, 4, 8, 16},
+        uint32_t episodes_per_seed = 100,
+        uint32_t train_steps = 20000,
+        const std::string& csv_path = "experiments/results/phase5/milestone5d2_multi_horizon.csv"
+    );
+
+    // Phase 5 Milestone 5D.3: Recurrence Memory Ablations Under Open-Loop Generation
+    static std::vector<RolloutMetrics> run_milestone5d3_ablations(
+        size_t num_seeds = 5,
+        const std::vector<uint32_t>& horizons = {1, 2, 4, 8, 16},
+        uint32_t episodes_per_seed = 100,
+        const std::string& csv_path = "experiments/results/phase5/milestone5d3_ablations.csv"
+    );
+
+    // Phase 5 Milestone 5D.4: Scientific Baselines & Controls Comparison
+    static std::vector<RolloutMetrics> run_milestone5d4_controls(
+        size_t num_seeds = 5,
+        const std::vector<uint32_t>& horizons = {1, 2, 4, 8, 16},
+        uint32_t episodes_per_seed = 100,
+        const std::string& csv_path = "experiments/results/phase5/milestone5d4_controls.csv"
     );
 
     static AggregatedStats compute_aggregate(const std::vector<ExperimentRecord>& records, const std::string& name);
