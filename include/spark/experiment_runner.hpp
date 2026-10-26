@@ -94,6 +94,16 @@ public:
         const std::string& csv_path = "experiments/results/phase5/milestone5b_transitions.csv"
     );
 
+    // Phase 5 Milestone 5C: Partial Observability, State Tracking & Ablations
+    static std::vector<Milestone5cRecord> run_milestone5c_suite(
+        size_t num_seeds = 5,
+        uint32_t train_steps = 8000,
+        uint32_t unroll_steps = 16,
+        float lr = 0.02f,
+        uint32_t num_eval_episodes = 200,
+        const std::string& csv_path = "experiments/results/phase5/milestone5c_partial_obs.csv"
+    );
+
     static AggregatedStats compute_aggregate(const std::vector<ExperimentRecord>& records, const std::string& name);
 };
 

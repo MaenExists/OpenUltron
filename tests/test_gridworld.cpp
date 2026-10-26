@@ -448,8 +448,78 @@ void test_baselines_and_readout_only() {
     std::cout << "[Test] test_baselines_and_readout_only PASSED." << std::endl;
 }
 
+void test_partial_observability_encoding_and_leak_prevention() {
+    std::cout << "[Test] Running test_partial_observability_encoding_and_leak_prevention..." << std::endl;
+
+    auto splits = spark::GridWorldEnv::generate_split_layouts(2, 2, 2, 4, 6, 999ULL);
+    spark::GridWorldEnv env(splits.train_layouts, 16, 42ULL, spark::GridObservationMode::PartiallyObservable);
+
+    REQUIRE(env.input_dim() == 56, "Partially observable input dim must be 56");
+    REQUIRE(env.output_dim() == 25, "Output dim must be 25");
+
+    env.reset();
+    uint32_t start_pos = env.agent_position();
+    auto obs0 = env.get_observation();
+
+    // Step 0: position must be visible
+    REQUIRE(obs0.values[25] == 1.0f, "Step 0 pos_mask must be 1.0");
+    REQUIRE(obs0.values[start_pos] == 1.0f, "Step 0 agent pos one-hot must be 1.0");
+    for (uint32_t i = 0; i < 25; ++i) {
+        if (i != start_pos) {
+            REQUIRE(obs0.values[i] == 0.0f, "Step 0 other pos cells must be 0.0");
+        }
+    }
+
+    // Step 1: position must be WITHHELD
+    env.step();
+    auto obs1 = env.get_observation();
+    REQUIRE(obs1.values[25] == 0.0f, "Step 1 pos_mask must be 0.0");
+    for (uint32_t i = 0; i < 25; ++i) {
+        REQUIRE(obs1.values[i] == 0.0f, "Step 1 pos cells must be strictly 0.0 (no leak!)");
+    }
+
+    // Step 2 to 15: position must continue to be withheld
+    for (uint32_t s = 2; s < 16; ++s) {
+        env.step();
+        auto obs_s = env.get_observation();
+        REQUIRE(obs_s.values[25] == 0.0f, "Step >0 pos_mask must be 0.0");
+        for (uint32_t i = 0; i < 25; ++i) {
+            REQUIRE(obs_s.values[i] == 0.0f, "Step >0 pos cells must be strictly 0.0");
+        }
+    }
+
+    std::cout << "[Test] test_partial_observability_encoding_and_leak_prevention PASSED." << std::endl;
+}
+
+void test_partial_observability_evaluators_and_oracle() {
+    std::cout << "[Test] Running test_partial_observability_evaluators_and_oracle..." << std::endl;
+
+    auto splits = spark::GridWorldEnv::generate_split_layouts(2, 2, 5, 3, 5, 888ULL);
+    spark::GridWorldEnv test_env(splits.test_layouts, 16, 123ULL, spark::GridObservationMode::PartiallyObservable);
+
+    // 1. Oracle should achieve 100% across all horizons
+    for (uint32_t h : {2, 4, 8, 16}) {
+        auto oracle_res = spark::evaluate_oracle_partial_obs(test_env, 20, h);
+        REQUIRE(oracle_res.total_episodes == 20, "Oracle total episodes mismatch");
+        REQUIRE(oracle_res.total_transitions == 20 * h, "Oracle total transitions mismatch");
+        REQUIRE(oracle_res.correct_transitions == 20 * h, "Oracle must be 100% accurate");
+        REQUIRE(std::abs(oracle_res.overall_accuracy() - 1.0f) < 1e-5f, "Oracle accuracy must be 1.0");
+        REQUIRE(oracle_res.step_metrics.size() == h, "Step metrics size mismatch");
+        for (uint32_t s = 0; s < h; ++s) {
+            REQUIRE(std::abs(oracle_res.step_metrics[s].accuracy() - 1.0f) < 1e-5f, "Oracle step accuracy must be 1.0");
+        }
+    }
+
+    // 2. Random predictor should be near 4% (1/25)
+    auto rand_res = spark::evaluate_random_partial_obs(test_env, 100, 16, 42ULL);
+    REQUIRE(rand_res.overall_accuracy() >= 0.01f && rand_res.overall_accuracy() <= 0.12f,
+            "Random predictor should be near 4% accuracy");
+
+    std::cout << "[Test] test_partial_observability_evaluators_and_oracle PASSED." << std::endl;
+}
+
 int main() {
-    std::cout << "=== Running SPARK Milestone 5A/5B (Grid-World & Transition Model) Tests ===" << std::endl;
+    std::cout << "=== Running SPARK Milestone 5A/5B/5C (Grid-World & World Models) Tests ===" << std::endl;
 
     test_deterministic_transitions();
     test_boundary_collisions();
@@ -462,7 +532,9 @@ int main() {
     test_categorical_gradient_finite_difference();
     test_env_lifecycle_and_reset();
     test_baselines_and_readout_only();
+    test_partial_observability_encoding_and_leak_prevention();
+    test_partial_observability_evaluators_and_oracle();
 
-    std::cout << "All Milestone 5A/5B tests passed successfully!" << std::endl;
+    std::cout << "All Milestone 5A/5B/5C tests passed successfully!" << std::endl;
     return 0;
 }

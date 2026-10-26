@@ -142,6 +142,76 @@ struct Milestone5bRecord {
     static std::string csv_header();
 };
 
+// Partial Observability Step Diagnostics
+struct PartialObsStepMetrics {
+    uint32_t step_index = 0; // 0-indexed step in episode (0 = initial observed step)
+    size_t total_evals = 0;
+    size_t correct_evals = 0;
+    double total_loss = 0.0;
+
+    float accuracy() const {
+        return (total_evals > 0) ? static_cast<float>(correct_evals) / total_evals : 0.0f;
+    }
+    float mean_loss() const {
+        return (total_evals > 0) ? static_cast<float>(total_loss / total_evals) : 0.0f;
+    }
+};
+
+// Partial Observability Full Metrics
+struct PartialObsMetrics {
+    std::string model_name = "SPARK_PartiallyObservable";
+    uint32_t horizon = 16;
+    size_t total_episodes = 0;
+    size_t total_transitions = 0;
+    size_t correct_transitions = 0;
+    double total_loss = 0.0;
+    double inference_seconds = 0.0;
+
+    std::vector<PartialObsStepMetrics> step_metrics;
+
+    float overall_accuracy() const {
+        return (total_transitions > 0) ? static_cast<float>(correct_transitions) / total_transitions : 0.0f;
+    }
+    float mean_loss() const {
+        return (total_transitions > 0) ? static_cast<float>(total_loss / total_transitions) : 0.0f;
+    }
+    float accuracy_at_step(uint32_t step) const {
+        if (step < step_metrics.size() && step_metrics[step].total_evals > 0) {
+            return step_metrics[step].accuracy();
+        }
+        return 0.0f;
+    }
+
+    void print_summary() const;
+};
+
+enum class PartialObsAblation {
+    None,
+    ResetStateEachStep,
+    ZeroRecurrentWeights
+};
+
+struct Milestone5cRecord {
+    std::string experiment_id;
+    uint64_t seed = 42;
+    std::string model_type; // "trained_spark", "reset_hidden", "zero_weights", "frozen_recurrent", "readout_only", "oracle", "random"
+    uint32_t units = 128;
+    uint32_t fan_in = 8;
+    uint32_t horizon = 16;
+    size_t evaluated_episodes = 0;
+    float overall_accuracy = 0.0f;
+    float step1_acc = 0.0f; // step 0 (observed) -> predicting s_1
+    float step2_acc = 0.0f; // step 1 (hidden) -> predicting s_2
+    float step4_acc = 0.0f; // step 3 (hidden) -> predicting s_4
+    float step8_acc = 0.0f; // step 7 (hidden) -> predicting s_8
+    float step16_acc = 0.0f; // step 15 (hidden) -> predicting s_16
+    float mean_loss = 0.0f;
+    double elapsed_seconds = 0.0;
+
+    std::string to_csv() const;
+    static std::string csv_header();
+};
+
 class GridWorldEnv : public Environment {
 public:
     static constexpr uint32_t DEFAULT_WIDTH = 5;
@@ -200,6 +270,8 @@ public:
     void set_observation_mode(GridObservationMode mode) { obs_mode_ = mode; }
     void set_position_observed(bool observed) { pos_observed_ = observed; }
     bool is_position_observed() const { return pos_observed_; }
+    void set_episode_length(uint32_t len) { episode_length_ = len; }
+    uint32_t episode_length() const { return episode_length_; }
 
     const TransitionResult& last_transition() const { return last_transition_; }
 
@@ -271,6 +343,28 @@ struct BaselineSuiteResults {
 BaselineSuiteResults evaluate_all_baselines(
     GridWorldEnv& env,
     uint32_t total_transitions,
+    uint64_t seed = 42ULL
+);
+
+// Milestone 5C: Partial Observability Evaluators
+PartialObsMetrics evaluate_partial_observability(
+    MicroUnitNetwork& net,
+    GridWorldEnv& env,
+    uint32_t num_episodes,
+    uint32_t horizon = 16,
+    PartialObsAblation ablation = PartialObsAblation::None
+);
+
+PartialObsMetrics evaluate_oracle_partial_obs(
+    GridWorldEnv& env,
+    uint32_t num_episodes,
+    uint32_t horizon = 16
+);
+
+PartialObsMetrics evaluate_random_partial_obs(
+    GridWorldEnv& env,
+    uint32_t num_episodes,
+    uint32_t horizon = 16,
     uint64_t seed = 42ULL
 );
 

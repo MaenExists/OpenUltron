@@ -67,7 +67,21 @@
     - Evaluated SPARK (TBPTT, 128 units, fan-in 8) across 5 independent seeds on 10,000 held-out transitions per seed: **87.46% ± 1.55%** overall accuracy, **98.26%** boundary collision accuracy, **89.58%** successful move accuracy, outperforming the Naive Movement baseline.
     - Exported machine-readable results to `experiments/results/phase5/milestone5b_transitions.csv`.
     - Unit test suite extended to 11 tests passing 100%.
-  - **Milestone 5C — Partial observability and memory** (Next)
+  - **Milestone 5C — Partial observability and memory** (Completed: 2026-10-26)
+    - Implemented 56-dimensional partially observable environment protocol (`pos_mask = 1.0` at $t=0$, `pos_mask = 0.0` with strictly zeroed position vector for $t \ge 1$).
+    - Implemented `PartialObsMetrics`, step-level diagnostics, and automated evaluators for intact models, ground-truth oracle, and random baselines.
+    - Implemented inference ablations: `ResetStateEachStep` (severing recurrent belief state) and `ZeroRecurrentWeights` ($W=0$).
+    - Implemented training ablations: Readout-Only and Frozen Recurrent ($W$ fixed at random initialization).
+    - Benchmarked multi-step tracking over horizons $H \in \{2, 4, 8, 16\}$ on 20 unseen test layouts across 5 seeds:
+      - Horizon 2: Intact SPARK **40.50% ± 3.34%** vs Reset State **28.40%** vs Random **4.50%**.
+      - Horizon 4: Intact SPARK **31.60% ± 1.47%** vs Reset State **17.95%** vs Random **3.75%**.
+      - Horizon 8: Intact SPARK **25.95% ± 0.99%** vs Reset State **13.21%** vs Random **3.94%**.
+      - Horizon 16: Intact SPARK **22.41% ± 0.72%** vs Reset State **10.59% ± 1.18%** vs Zero Weights **14.32% ± 1.75%** vs Readout-Only **12.81%** vs Random **3.78%**.
+      - Step-level memory: at step 2 (1 step after observation hidden), intact SPARK scores **31.4%** vs reset state **9.3%** (+22.1% advantage); at step 4, **25.5%** vs **7.5%** (+18.0% advantage); at step 8, **18.3%** vs **7.8%** (+10.5% advantage); at step 16, **17.6%** vs **10.0%** (+7.6% advantage).
+      - Ground-truth oracle achieved **100.00%** across all horizons.
+    - Exported 76 experimental runs to `experiments/results/phase5/milestone5c_partial_obs.csv`.
+    - Unit test suite extended to 13 tests passing 100%; all 8 CTest suites passing in 0.15s.
+  - **Milestone 5D — Predictive generation** (Next)
 
 ## Pending Phases
 - Phase 6: Iterative Internal Computation

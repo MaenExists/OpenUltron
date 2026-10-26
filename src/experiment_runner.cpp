@@ -1120,4 +1120,297 @@ std::vector<Milestone5bRecord> ExperimentRunner::run_milestone5b_suite(
     return all_records;
 }
 
+std::vector<Milestone5cRecord> ExperimentRunner::run_milestone5c_suite(
+    size_t num_seeds,
+    uint32_t train_steps,
+    uint32_t unroll_steps,
+    float lr,
+    uint32_t num_eval_episodes,
+    const std::string& csv_path
+) {
+    std::cout << "\n=========================================================================================\n"
+              << "  SPARK Milestone 5C: Partial Observability, Temporal State Estimation & Ablations\n"
+              << "=========================================================================================\n"
+              << "  Evaluation Horizons: {2, 4, 8, 16} steps\n"
+              << "  Episodes per Eval: " << num_eval_episodes << " on 20 unseen test layouts\n"
+              << "  Training: " << train_steps << " steps (unroll=" << unroll_steps << ", lr=" << lr << ")\n"
+              << "=========================================================================================\n"
+              << std::endl;
+
+    std::vector<Milestone5cRecord> all_records;
+
+    // 1. Generate strictly partitioned layouts
+    auto splits = GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 5000ULL);
+    std::cout << "Generated layout splits with 0 overlap: "
+              << splits.train_layouts.size() << " train, "
+              << splits.val_layouts.size() << " val, "
+              << splits.test_layouts.size() << " test.\n" << std::endl;
+
+    GridWorldEnv test_env(splits.test_layouts, 16, 8888ULL, GridObservationMode::PartiallyObservable);
+
+    // Print header for horizon 16 table
+    auto print_h16_header = []() {
+        std::cout << std::string(105, '-') << "\n"
+                  << std::left << std::setw(28) << "Condition / Run (H=16)"
+                  << std::right << std::setw(12) << "Overall Acc"
+                  << std::setw(10) << "Step 1"
+                  << std::setw(10) << "Step 2"
+                  << std::setw(10) << "Step 4"
+                  << std::setw(10) << "Step 8"
+                  << std::setw(10) << "Step 16"
+                  << std::setw(12) << "Test Loss"
+                  << "\n" << std::string(105, '-') << std::endl;
+    };
+
+    auto record_eval = [&](
+        MicroUnitNetwork& net,
+        const std::string& model_type,
+        uint64_t seed,
+        double training_time,
+        PartialObsAblation ablation
+    ) {
+        for (uint32_t H : {2, 4, 8, 16}) {
+            PartialObsMetrics m = evaluate_partial_observability(net, test_env, num_eval_episodes, H, ablation);
+            Milestone5cRecord rec;
+            rec.experiment_id = model_type + "_H" + std::to_string(H) + "_s" + std::to_string(seed);
+            rec.seed = seed;
+            rec.model_type = model_type;
+            rec.units = net.config().num_units;
+            rec.fan_in = 8;
+            rec.horizon = H;
+            rec.evaluated_episodes = num_eval_episodes;
+            rec.overall_accuracy = m.overall_accuracy();
+            rec.step1_acc = m.accuracy_at_step(0);
+            rec.step2_acc = (H >= 2) ? m.accuracy_at_step(1) : 0.0f;
+            rec.step4_acc = (H >= 4) ? m.accuracy_at_step(3) : 0.0f;
+            rec.step8_acc = (H >= 8) ? m.accuracy_at_step(7) : 0.0f;
+            rec.step16_acc = (H >= 16) ? m.accuracy_at_step(15) : 0.0f;
+            rec.mean_loss = m.mean_loss();
+            rec.elapsed_seconds = training_time + m.inference_seconds;
+            all_records.push_back(rec);
+
+            if (H == 16) {
+                std::cout << std::left << std::setw(28) << (model_type + " (H=16)")
+                          << std::right << std::fixed << std::setprecision(2)
+                          << std::setw(12) << (rec.overall_accuracy * 100.0f) << "%"
+                          << std::setw(10) << (rec.step1_acc * 100.0f) << "%"
+                          << std::setw(10) << (rec.step2_acc * 100.0f) << "%"
+                          << std::setw(10) << (rec.step4_acc * 100.0f) << "%"
+                          << std::setw(10) << (rec.step8_acc * 100.0f) << "%"
+                          << std::setw(10) << (rec.step16_acc * 100.0f) << "%"
+                          << std::setprecision(4) << std::setw(12) << rec.mean_loss
+                          << std::endl;
+            }
+        }
+    };
+
+    // 2. Baselines (Oracle & Random)
+    std::cout << ">>> Evaluating Control Baselines Under Partial Observability <<<" << std::endl;
+    print_h16_header();
+
+    // Oracle
+    for (uint32_t H : {2, 4, 8, 16}) {
+        PartialObsMetrics m = evaluate_oracle_partial_obs(test_env, num_eval_episodes, H);
+        Milestone5cRecord rec;
+        rec.experiment_id = "oracle_H" + std::to_string(H);
+        rec.seed = 42;
+        rec.model_type = "ground_truth_oracle";
+        rec.units = 0;
+        rec.fan_in = 0;
+        rec.horizon = H;
+        rec.evaluated_episodes = num_eval_episodes;
+        rec.overall_accuracy = m.overall_accuracy();
+        rec.step1_acc = m.accuracy_at_step(0);
+        rec.step2_acc = (H >= 2) ? m.accuracy_at_step(1) : 0.0f;
+        rec.step4_acc = (H >= 4) ? m.accuracy_at_step(3) : 0.0f;
+        rec.step8_acc = (H >= 8) ? m.accuracy_at_step(7) : 0.0f;
+        rec.step16_acc = (H >= 16) ? m.accuracy_at_step(15) : 0.0f;
+        rec.mean_loss = 0.0f;
+        rec.elapsed_seconds = m.inference_seconds;
+        all_records.push_back(rec);
+
+        if (H == 16) {
+            std::cout << std::left << std::setw(28) << "Ground-Truth Oracle"
+                      << std::right << std::fixed << std::setprecision(2)
+                      << std::setw(12) << (rec.overall_accuracy * 100.0f) << "%"
+                      << std::setw(10) << (rec.step1_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step2_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step4_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step8_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step16_acc * 100.0f) << "%"
+                      << std::setprecision(4) << std::setw(12) << rec.mean_loss
+                      << std::endl;
+        }
+    }
+
+    // Random
+    for (uint32_t H : {2, 4, 8, 16}) {
+        PartialObsMetrics m = evaluate_random_partial_obs(test_env, num_eval_episodes, H, 42ULL);
+        Milestone5cRecord rec;
+        rec.experiment_id = "random_H" + std::to_string(H);
+        rec.seed = 42;
+        rec.model_type = "random_predictor";
+        rec.units = 0;
+        rec.fan_in = 0;
+        rec.horizon = H;
+        rec.evaluated_episodes = num_eval_episodes;
+        rec.overall_accuracy = m.overall_accuracy();
+        rec.step1_acc = m.accuracy_at_step(0);
+        rec.step2_acc = (H >= 2) ? m.accuracy_at_step(1) : 0.0f;
+        rec.step4_acc = (H >= 4) ? m.accuracy_at_step(3) : 0.0f;
+        rec.step8_acc = (H >= 8) ? m.accuracy_at_step(7) : 0.0f;
+        rec.step16_acc = (H >= 16) ? m.accuracy_at_step(15) : 0.0f;
+        rec.mean_loss = m.mean_loss();
+        rec.elapsed_seconds = m.inference_seconds;
+        all_records.push_back(rec);
+
+        if (H == 16) {
+            std::cout << std::left << std::setw(28) << "Random Predictor"
+                      << std::right << std::fixed << std::setprecision(2)
+                      << std::setw(12) << (rec.overall_accuracy * 100.0f) << "%"
+                      << std::setw(10) << (rec.step1_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step2_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step4_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step8_acc * 100.0f) << "%"
+                      << std::setw(10) << (rec.step16_acc * 100.0f) << "%"
+                      << std::setprecision(4) << std::setw(12) << rec.mean_loss
+                      << std::endl;
+        }
+    }
+    std::cout << std::string(105, '-') << "\n" << std::endl;
+
+    // 3. Training Ablations (Readout-Only & Frozen Recurrent)
+    std::cout << ">>> Training & Evaluating Structural Training Ablations <<<" << std::endl;
+    print_h16_header();
+
+    // Readout-Only
+    {
+        uint64_t seed = 42ULL;
+        SparseGraphConfig g_cfg;
+        g_cfg.num_units = 128;
+        g_cfg.fan_in = 8;
+        g_cfg.seed = seed;
+
+        NetworkConfig n_cfg;
+        n_cfg.num_units = 128;
+        n_cfg.input_dim = GridWorldEnv::PARTIAL_INPUT_DIM;
+        n_cfg.output_dim = GridWorldEnv::OUTPUT_DIM;
+        n_cfg.alpha = 0.8f;
+        n_cfg.beta = 1.0f;
+        n_cfg.seed = seed;
+
+        MicroUnitNetwork net(n_cfg, g_cfg);
+        GridWorldEnv train_env(splits.train_layouts, 16, seed, GridObservationMode::PartiallyObservable);
+        GridWorldEnv val_env(splits.val_layouts, 16, seed + 1000ULL, GridObservationMode::PartiallyObservable);
+
+        Trainer trainer(net, train_env, &val_env, lr, 1.0f);
+        trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+        trainer.set_readout_only(true);
+
+        TrainSummary s = trainer.train(train_steps, unroll_steps, 0, true);
+        record_eval(net, "readout_only", seed, s.total_seconds, PartialObsAblation::None);
+    }
+
+    // Frozen Recurrent (train input, biases, readout, keep W frozen)
+    {
+        uint64_t seed = 42ULL;
+        SparseGraphConfig g_cfg;
+        g_cfg.num_units = 128;
+        g_cfg.fan_in = 8;
+        g_cfg.seed = seed;
+
+        NetworkConfig n_cfg;
+        n_cfg.num_units = 128;
+        n_cfg.input_dim = GridWorldEnv::PARTIAL_INPUT_DIM;
+        n_cfg.output_dim = GridWorldEnv::OUTPUT_DIM;
+        n_cfg.alpha = 0.8f;
+        n_cfg.beta = 1.0f;
+        n_cfg.seed = seed;
+
+        MicroUnitNetwork net(n_cfg, g_cfg);
+        GridWorldEnv train_env(splits.train_layouts, 16, seed, GridObservationMode::PartiallyObservable);
+        GridWorldEnv val_env(splits.val_layouts, 16, seed + 1000ULL, GridObservationMode::PartiallyObservable);
+
+        Trainer trainer(net, train_env, &val_env, lr, 1.0f);
+        trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+        trainer.set_train_recurrent(false);
+
+        TrainSummary s = trainer.train(train_steps, unroll_steps, 0, true);
+        record_eval(net, "frozen_recurrent", seed, s.total_seconds, PartialObsAblation::None);
+    }
+    std::cout << std::string(105, '-') << "\n" << std::endl;
+
+    // 4. Fully Trained SPARK across multiple seeds + Inference Ablations
+    std::cout << ">>> Training SPARK Partial Observability Models Across " << num_seeds << " Seeds <<<" << std::endl;
+    print_h16_header();
+
+    double intact_h16_acc_sum = 0.0;
+    double reset_h16_acc_sum = 0.0;
+    double zero_h16_acc_sum = 0.0;
+
+    for (size_t s_idx = 0; s_idx < num_seeds; ++s_idx) {
+        uint64_t seed = 42ULL + s_idx * 17ULL;
+
+        SparseGraphConfig g_cfg;
+        g_cfg.num_units = 128;
+        g_cfg.fan_in = 8;
+        g_cfg.seed = seed;
+
+        NetworkConfig n_cfg;
+        n_cfg.num_units = 128;
+        n_cfg.input_dim = GridWorldEnv::PARTIAL_INPUT_DIM;
+        n_cfg.output_dim = GridWorldEnv::OUTPUT_DIM;
+        n_cfg.alpha = 0.8f;
+        n_cfg.beta = 1.0f;
+        n_cfg.seed = seed;
+
+        MicroUnitNetwork net(n_cfg, g_cfg);
+        GridWorldEnv train_env(splits.train_layouts, 16, seed, GridObservationMode::PartiallyObservable);
+        GridWorldEnv val_env(splits.val_layouts, 16, seed + 1000ULL, GridObservationMode::PartiallyObservable);
+
+        Trainer trainer(net, train_env, &val_env, lr, 1.0f);
+        trainer.set_loss_type(LossType::CategoricalCrossEntropy);
+
+        TrainSummary s = trainer.train(train_steps, unroll_steps, 500, false);
+
+        // a) Intact Model
+        record_eval(net, "trained_spark_s" + std::to_string(seed), seed, s.total_seconds, PartialObsAblation::None);
+        intact_h16_acc_sum += all_records.back().overall_accuracy;
+
+        // b) Reset State Each Step Ablation
+        record_eval(net, "reset_state_s" + std::to_string(seed), seed, 0.0, PartialObsAblation::ResetStateEachStep);
+        reset_h16_acc_sum += all_records.back().overall_accuracy;
+
+        // c) Zero Recurrent Weights Ablation
+        record_eval(net, "zero_weights_s" + std::to_string(seed), seed, 0.0, PartialObsAblation::ZeroRecurrentWeights);
+        zero_h16_acc_sum += all_records.back().overall_accuracy;
+    }
+
+    std::cout << std::string(105, '=') << "\n"
+              << std::left << std::setw(28) << "SPARK Mean (Intact, H=16)"
+              << std::right << std::fixed << std::setprecision(2)
+              << std::setw(12) << ((intact_h16_acc_sum / num_seeds) * 100.0f) << "%\n"
+              << std::left << std::setw(28) << "SPARK Mean (Reset State, H=16)"
+              << std::right << std::fixed << std::setprecision(2)
+              << std::setw(12) << ((reset_h16_acc_sum / num_seeds) * 100.0f) << "%\n"
+              << std::left << std::setw(28) << "SPARK Mean (Zero Weights, H=16)"
+              << std::right << std::fixed << std::setprecision(2)
+              << std::setw(12) << ((zero_h16_acc_sum / num_seeds) * 100.0f) << "%\n"
+              << std::string(105, '=') << "\n" << std::endl;
+
+    // Export CSV
+    if (!csv_path.empty()) {
+        std::ofstream ofs(csv_path);
+        if (ofs.is_open()) {
+            ofs << Milestone5cRecord::csv_header() << "\n";
+            for (const auto& r : all_records) {
+                ofs << r.to_csv() << "\n";
+            }
+            std::cout << "Exported " << all_records.size() << " experimental runs to " << csv_path << std::endl;
+        }
+    }
+
+    return all_records;
+}
+
 } // namespace spark

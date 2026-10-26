@@ -47,6 +47,7 @@ void print_info() {
               << "  spark phase4 [--seeds S] [--csv PATH]\n"
               << "  spark local-ablate [--delay D] [--units N] [--seeds S] [--csv PATH]\n"
               << "  spark world-model [--seeds S] [--steps N] [--unroll U] [--lr LR] [--test-transitions T] [--csv PATH]\n"
+              << "  spark partial-obs [--seeds S] [--steps N] [--unroll U] [--lr LR] [--episodes E] [--csv PATH]\n"
               << std::endl;
 }
 
@@ -490,6 +491,28 @@ void run_world_model_cmd(int argc, char* argv[]) {
     spark::ExperimentRunner::run_milestone5b_suite(num_seeds, steps, unroll, lr, test_transitions, csv_path);
 }
 
+void run_partial_obs_cmd(int argc, char* argv[]) {
+    size_t num_seeds = 5;
+    uint32_t steps = 8000;
+    uint32_t unroll = 16;
+    float lr = 0.02f;
+    uint32_t episodes = 200;
+    std::string csv_path = "experiments/results/phase5/milestone5c_partial_obs.csv";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--seeds" && i + 1 < argc) num_seeds = std::stoul(argv[++i]);
+        else if (arg == "--steps" && i + 1 < argc) steps = std::stoul(argv[++i]);
+        else if (arg == "--unroll" && i + 1 < argc) unroll = std::stoul(argv[++i]);
+        else if (arg == "--lr" && i + 1 < argc) lr = std::stof(argv[++i]);
+        else if (arg == "--episodes" && i + 1 < argc) episodes = std::stoul(argv[++i]);
+        else if (arg == "--csv" && i + 1 < argc) csv_path = argv[++i];
+    }
+
+    print_banner();
+    spark::ExperimentRunner::run_milestone5c_suite(num_seeds, steps, unroll, lr, episodes, csv_path);
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_info();
@@ -519,6 +542,8 @@ int main(int argc, char* argv[]) {
         run_local_ablate_cmd(argc, argv);
     } else if (cmd == "world-model") {
         run_world_model_cmd(argc, argv);
+    } else if (cmd == "partial-obs") {
+        run_partial_obs_cmd(argc, argv);
     } else {
         std::cerr << "Unknown command: '" << cmd << "'\n"
                   << "Run 'spark info' for available commands." << std::endl;

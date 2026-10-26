@@ -618,4 +618,225 @@ BaselineSuiteResults evaluate_all_baselines(
     return results;
 }
 
+void PartialObsMetrics::print_summary() const {
+    std::cout << std::string(75, '-') << "\n"
+              << "Partial Observability Metrics: " << model_name << " (Horizon: " << horizon << ")\n"
+              << "Total Episodes: " << total_episodes << ", Total Steps: " << total_transitions << "\n"
+              << "Overall Accuracy: " << std::fixed << std::setprecision(2) << (overall_accuracy() * 100.0f) << "%\n"
+              << "Mean Loss: " << std::setprecision(4) << mean_loss() << "\n"
+              << "Inference Time: " << std::setprecision(3) << inference_seconds << "s\n"
+              << "Step Accuracy Breakdown:\n";
+    for (size_t s = 0; s < step_metrics.size(); ++s) {
+        std::cout << "  Step " << std::setw(2) << (s + 1)
+                  << " (Elapsed " << std::setw(2) << s << "): "
+                  << std::setw(6) << std::setprecision(2) << (step_metrics[s].accuracy() * 100.0f) << "%"
+                  << " (Loss: " << std::setprecision(4) << step_metrics[s].mean_loss() << ")\n";
+    }
+    std::cout << std::string(75, '-') << std::endl;
+}
+
+std::string Milestone5cRecord::csv_header() {
+    return "experiment_id,seed,model_type,units,fan_in,horizon,evaluated_episodes,overall_accuracy,step1_acc,step2_acc,step4_acc,step8_acc,step16_acc,mean_loss,elapsed_seconds";
+}
+
+std::string Milestone5cRecord::to_csv() const {
+    std::ostringstream ss;
+    ss << experiment_id << ","
+       << seed << ","
+       << model_type << ","
+       << units << ","
+       << fan_in << ","
+       << horizon << ","
+       << evaluated_episodes << ","
+       << std::fixed << std::setprecision(4) << overall_accuracy << ","
+       << step1_acc << ","
+       << step2_acc << ","
+       << step4_acc << ","
+       << step8_acc << ","
+       << step16_acc << ","
+       << std::setprecision(5) << mean_loss << ","
+       << std::setprecision(3) << elapsed_seconds;
+    return ss.str();
+}
+
+PartialObsMetrics evaluate_partial_observability(
+    MicroUnitNetwork& net,
+    GridWorldEnv& env,
+    uint32_t num_episodes,
+    uint32_t horizon,
+    PartialObsAblation ablation
+) {
+    PartialObsMetrics metrics;
+    metrics.horizon = horizon;
+    metrics.total_episodes = num_episodes;
+    metrics.step_metrics.resize(horizon);
+    for (uint32_t s = 0; s < horizon; ++s) {
+        metrics.step_metrics[s].step_index = s;
+    }
+
+    std::string ablation_name = "SPARK_PartiallyObservable";
+    if (ablation == PartialObsAblation::ResetStateEachStep) {
+        ablation_name += "_ResetState";
+    } else if (ablation == PartialObsAblation::ZeroRecurrentWeights) {
+        ablation_name += "_ZeroWeights";
+    }
+    metrics.model_name = ablation_name;
+
+    MicroUnitNetwork eval_net = net;
+    if (ablation == PartialObsAblation::ZeroRecurrentWeights) {
+        std::fill(eval_net.graph().weights.begin(), eval_net.graph().weights.end(), 0.0f);
+    }
+
+    Timer timer;
+    std::vector<float> logits;
+    std::vector<float> probs;
+
+    auto orig_mode = env.observation_mode();
+    auto orig_len = env.episode_length();
+    env.set_observation_mode(GridObservationMode::PartiallyObservable);
+    env.set_episode_length(horizon);
+
+    for (uint32_t ep = 0; ep < num_episodes; ++ep) {
+        env.reset();
+        eval_net.reset_state();
+
+        for (uint32_t t = 0; t < horizon; ++t) {
+            if (ablation == PartialObsAblation::ResetStateEachStep) {
+                eval_net.reset_state();
+            }
+
+            Observation obs = env.get_observation();
+            Target target = env.get_target();
+            uint32_t truth = env.next_position();
+
+            eval_net.forward_step(obs.values, logits, probs, ReadoutMode::Softmax);
+
+            float loss = TBPTTTrainer::categorical_ce_loss(logits, target.values);
+            metrics.total_loss += loss;
+            metrics.step_metrics[t].total_loss += loss;
+
+            uint32_t pred = static_cast<uint32_t>(std::distance(probs.begin(), std::max_element(probs.begin(), probs.end())));
+            bool correct = (pred == truth);
+
+            metrics.total_transitions++;
+            metrics.step_metrics[t].total_evals++;
+
+            if (correct) {
+                metrics.correct_transitions++;
+                metrics.step_metrics[t].correct_evals++;
+            }
+
+            env.step();
+        }
+    }
+
+    metrics.inference_seconds = timer.elapsed_seconds();
+
+    env.set_observation_mode(orig_mode);
+    env.set_episode_length(orig_len);
+
+    return metrics;
+}
+
+PartialObsMetrics evaluate_oracle_partial_obs(
+    GridWorldEnv& env,
+    uint32_t num_episodes,
+    uint32_t horizon
+) {
+    PartialObsMetrics metrics;
+    metrics.model_name = "GroundTruth_Oracle";
+    metrics.horizon = horizon;
+    metrics.total_episodes = num_episodes;
+    metrics.step_metrics.resize(horizon);
+    for (uint32_t s = 0; s < horizon; ++s) {
+        metrics.step_metrics[s].step_index = s;
+    }
+
+    Timer timer;
+    auto orig_mode = env.observation_mode();
+    auto orig_len = env.episode_length();
+    env.set_observation_mode(GridObservationMode::PartiallyObservable);
+    env.set_episode_length(horizon);
+
+    for (uint32_t ep = 0; ep < num_episodes; ++ep) {
+        env.reset();
+        uint32_t oracle_pos = env.agent_position();
+
+        for (uint32_t t = 0; t < horizon; ++t) {
+            Action a = env.current_action();
+            uint32_t truth = env.next_position();
+
+            auto res = GridWorldEnv::simulate_transition(oracle_pos, a, env.layout().obstacles, env.layout().width, env.layout().height);
+            uint32_t pred = res.to_pos;
+
+            bool correct = (pred == truth);
+            metrics.total_transitions++;
+            metrics.step_metrics[t].total_evals++;
+            if (correct) {
+                metrics.correct_transitions++;
+                metrics.step_metrics[t].correct_evals++;
+            }
+            metrics.total_loss += (correct ? 0.0 : 15.0);
+            metrics.step_metrics[t].total_loss += (correct ? 0.0 : 15.0);
+
+            oracle_pos = res.to_pos;
+            env.step();
+        }
+    }
+
+    metrics.inference_seconds = timer.elapsed_seconds();
+    env.set_observation_mode(orig_mode);
+    env.set_episode_length(orig_len);
+    return metrics;
+}
+
+PartialObsMetrics evaluate_random_partial_obs(
+    GridWorldEnv& env,
+    uint32_t num_episodes,
+    uint32_t horizon,
+    uint64_t seed
+) {
+    PartialObsMetrics metrics;
+    metrics.model_name = "Random_Predictor";
+    metrics.horizon = horizon;
+    metrics.total_episodes = num_episodes;
+    metrics.step_metrics.resize(horizon);
+    for (uint32_t s = 0; s < horizon; ++s) {
+        metrics.step_metrics[s].step_index = s;
+    }
+
+    Timer timer;
+    Random rng(seed);
+    auto orig_mode = env.observation_mode();
+    auto orig_len = env.episode_length();
+    env.set_observation_mode(GridObservationMode::PartiallyObservable);
+    env.set_episode_length(horizon);
+
+    for (uint32_t ep = 0; ep < num_episodes; ++ep) {
+        env.reset();
+
+        for (uint32_t t = 0; t < horizon; ++t) {
+            uint32_t truth = env.next_position();
+            uint32_t pred = static_cast<uint32_t>(rng.next_u64() % GridWorldEnv::NUM_CELLS);
+
+            bool correct = (pred == truth);
+            metrics.total_transitions++;
+            metrics.step_metrics[t].total_evals++;
+            if (correct) {
+                metrics.correct_transitions++;
+                metrics.step_metrics[t].correct_evals++;
+            }
+            metrics.total_loss += 3.2188758;
+            metrics.step_metrics[t].total_loss += 3.2188758;
+
+            env.step();
+        }
+    }
+
+    metrics.inference_seconds = timer.elapsed_seconds();
+    env.set_observation_mode(orig_mode);
+    env.set_episode_length(orig_len);
+    return metrics;
+}
+
 } // namespace spark
