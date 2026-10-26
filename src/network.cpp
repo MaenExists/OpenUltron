@@ -146,13 +146,110 @@ void MicroUnitNetwork::forward_step(
     compute_readout(out_logits, out_probs, mode);
 }
 
+void MicroUnitNetwork::recurrent_microstep_branching(
+    const std::vector<float>& h_in,
+    const std::vector<float>& input,
+    std::vector<float>& h_out,
+    std::vector<float>& a_out
+) const {
+    if (input.size() != config_.input_dim) {
+        throw std::invalid_argument("Input vector size (" + std::to_string(input.size()) +
+                                   ") does not match input_dim (" +
+                                   std::to_string(config_.input_dim) + ")");
+    }
+    if (h_in.size() != config_.num_units) {
+        throw std::invalid_argument("h_in size (" + std::to_string(h_in.size()) +
+                                   ") does not match num_units (" +
+                                   std::to_string(config_.num_units) + ")");
+    }
+
+    const uint32_t N = config_.num_units;
+    const uint32_t Din = config_.input_dim;
+    const float alpha = config_.alpha;
+    const float beta = config_.beta;
+
+    h_out.resize(N);
+    a_out.resize(N);
+
+    const auto& offsets = graph_.offsets;
+    const auto& sources = graph_.sources;
+    const auto& weights = graph_.weights;
+
+    for (uint32_t i = 0; i < N; ++i) {
+        float recurrent_sum = 0.0f;
+        uint32_t start = offsets[i];
+        uint32_t end = offsets[i + 1];
+        uint32_t Ki = end - start;
+
+        for (uint32_t e = start; e < end; ++e) {
+            uint32_t src = sources[e];
+            recurrent_sum += weights[e] * h_in[src];
+        }
+
+        float recurrent_term = 0.0f;
+        if (Ki > 0) {
+            recurrent_term = (beta / std::sqrt(static_cast<float>(Ki))) * recurrent_sum;
+        }
+
+        float input_term = 0.0f;
+        size_t u_row_offset = static_cast<size_t>(i) * Din;
+        for (uint32_t d = 0; d < Din; ++d) {
+            input_term += U_[u_row_offset + d] * input[d];
+        }
+
+        float a_i = alpha * h_in[i] + recurrent_term + input_term + biases_[i];
+        if (a_i > 20.0f) a_i = 20.0f;
+        if (a_i < -20.0f) a_i = -20.0f;
+
+        a_out[i] = a_i;
+        h_out[i] = std::tanh(a_i);
+    }
+}
+
+void MicroUnitNetwork::forward_step_branching(
+    const std::vector<float>& h_in,
+    const std::vector<float>& input,
+    std::vector<float>& h_out,
+    std::vector<float>& out_logits,
+    std::vector<float>& out_probs,
+    ReadoutMode mode
+) const {
+    std::vector<float> a_scratch;
+    std::vector<float> h_curr = h_in;
+    if (h_curr.size() != config_.num_units) {
+        h_curr.assign(config_.num_units, 0.0f);
+    }
+    std::vector<float> h_next(config_.num_units);
+
+    for (uint32_t m = 0; m < config_.microsteps; ++m) {
+        recurrent_microstep_branching(h_curr, input, h_next, a_scratch);
+        h_curr = h_next;
+    }
+
+    h_out = std::move(h_curr);
+    compute_readout_from_state(h_out, out_logits, out_probs, mode);
+}
+
 void MicroUnitNetwork::compute_readout(
+    std::vector<float>& out_logits,
+    std::vector<float>& out_probs,
+    ReadoutMode mode
+) const {
+    compute_readout_from_state(h_curr_, out_logits, out_probs, mode);
+}
+
+void MicroUnitNetwork::compute_readout_from_state(
+    const std::vector<float>& h,
     std::vector<float>& out_logits,
     std::vector<float>& out_probs,
     ReadoutMode mode
 ) const {
     const uint32_t N = config_.num_units;
     const uint32_t Dout = config_.output_dim;
+
+    if (h.size() != N) {
+        throw std::invalid_argument("Hidden state size mismatch in compute_readout_from_state");
+    }
 
     out_logits.resize(Dout);
     out_probs.resize(Dout);
@@ -161,7 +258,7 @@ void MicroUnitNetwork::compute_readout(
         float z_k = c_[k];
         size_t v_row_offset = static_cast<size_t>(k) * N;
         for (uint32_t i = 0; i < N; ++i) {
-            z_k += V_[v_row_offset + i] * h_curr_[i];
+            z_k += V_[v_row_offset + i] * h[i];
         }
         out_logits[k] = z_k;
     }

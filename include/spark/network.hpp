@@ -27,6 +27,8 @@ public:
     const std::vector<float>& state() const { return h_curr_; }
     const std::vector<float>& prev_state() const { return h_prev_; }
     const std::vector<float>& pre_activations() const { return a_curr_; }
+    std::vector<float> snapshot_state() const { return h_curr_; }
+    void restore_state(const std::vector<float>& snapshot) { set_state(snapshot); }
 
     // Forward computation
     // Performs internal microsteps and updates state synchronously.
@@ -37,14 +39,38 @@ public:
         ReadoutMode mode = ReadoutMode::Sigmoid
     );
 
+    // Stateless / branching recurrent computation (thread-safe, does not mutate network instance)
+    void recurrent_microstep_branching(
+        const std::vector<float>& h_in,
+        const std::vector<float>& input,
+        std::vector<float>& h_out,
+        std::vector<float>& a_out
+    ) const;
+
+    void forward_step_branching(
+        const std::vector<float>& h_in,
+        const std::vector<float>& input,
+        std::vector<float>& h_out,
+        std::vector<float>& out_logits,
+        std::vector<float>& out_probs,
+        ReadoutMode mode = ReadoutMode::Softmax
+    ) const;
+
     // Compute single internal recurrent microstep without updating output
     void recurrent_microstep(const std::vector<float>& input);
 
-    // Compute readout from current hidden state
+    // Compute readout from current hidden state or explicit state buffer
     void compute_readout(
         std::vector<float>& out_logits,
         std::vector<float>& out_probs,
         ReadoutMode mode = ReadoutMode::Sigmoid
+    ) const;
+
+    void compute_readout_from_state(
+        const std::vector<float>& h,
+        std::vector<float>& out_logits,
+        std::vector<float>& out_probs,
+        ReadoutMode mode = ReadoutMode::Softmax
     ) const;
 
     // Mathematical utility functions

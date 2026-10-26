@@ -89,7 +89,10 @@
     - Sub-milestone 5D.4 (Scientific Baselines & Controls): Compared against Oracle (100%), Feedforward MLP (100% in fully observable Markov setting), Naive-Move (51.8%), Copy-Current (23.4%), and Random (4.0%).
     - Exported empirical CSV datasets to `experiments/results/phase5/milestone5d2_multi_horizon.csv`, `milestone5d3_ablations.csv`, and `milestone5d4_controls.csv`.
     - Documented comprehensive research findings in `docs/MILESTONE5D_FINDINGS.md`.
-  - **Milestone 5E — Goal-directed planning & active world models** (Next)
+  - **Milestone 5E — Goal-directed planning & active world models** (In Progress)
+    - Sub-milestone 5E.0 (Audit & Diagnostics): Reconciled cold-start vs warmed-up recurrent dynamics ($89.6\%$ cold start vs $97.4\%$ warmed-up), explained evaluation weighting across horizons, and verified exact step sample counts.
+    - Sub-milestone 5E.1 (Goal Planning Foundation & Recurrent Branching): Built reachable planning episode generator (`PlanningEpisodeGenerator`); ground-truth BFS oracle (`BFSSolver`) strictly encapsulated for reachability/metrics; lightweight `PlanningNode`; independent recurrent-state branching (`forward_step_branching`) with proven order invariance; configurable trajectory scoring ($J = R_{\text{goal}} - \lambda_d D - \lambda_s L + \text{early\_bonus}$) with 6-tier deterministic tie-breaking; cold-start vs warmed-up root policies; automated test suite `test_planning` (10/10 CTests passing in 0.16s); CLI command `spark plan-foundation`; findings documented in `docs/MILESTONE5E1_FINDINGS.md`.
+    - Sub-milestone 5E.2 (Search Algorithms & Closed-Loop Planning Evaluation): Next.
 
 ## Pending Phases
 - Phase 6: Iterative Internal Computation

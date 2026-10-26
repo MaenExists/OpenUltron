@@ -34,6 +34,7 @@ set(SPARK_CORE_SOURCES
     src/local_learning.cpp
     src/gridworld.cpp
     src/rollout.cpp
+    src/planning.cpp
 )
 
 add_library(spark_core STATIC ${SPARK_CORE_SOURCES})
@@ -87,3 +88,7 @@ add_test(NAME test_gridworld COMMAND test_gridworld)
 add_executable(test_rollout tests/test_rollout.cpp)
 target_link_libraries(test_rollout PRIVATE spark_core)
 add_test(NAME test_rollout COMMAND test_rollout)
+
+add_executable(test_planning tests/test_planning.cpp)
+target_link_libraries(test_planning PRIVATE spark_core)
+add_test(NAME test_planning COMMAND test_planning)
