@@ -369,8 +369,132 @@ void test_checkpoint_immutability() {
     std::cout << "[Test] test_checkpoint_immutability PASSED." << std::endl;
 }
 
+// 9. Milestone 5E.2A: Test Bounded Beam Search Core and Bounded Limits
+void test_beam_search_core_bounded_limits() {
+    std::cout << "[Test] Running test_beam_search_core_bounded_limits..." << std::endl;
+
+    auto net = create_test_network(2026ULL);
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    // Case 1: Root already at goal -> returns immediately
+    auto root_at_goal = spark::PlanningEngine::create_cold_start_root(12, 12, 128);
+    spark::BeamSearchConfig cfg1;
+    cfg1.beam_width = 4;
+    cfg1.max_depth = 6;
+    auto res1 = spark::PlanningEngine::beam_search(net, layout, root_at_goal, 12, cfg1);
+
+    REQUIRE(res1.goal_reached, "Root at goal must yield goal_reached = true");
+    REQUIRE(res1.best_plan.empty(), "Root at goal must have empty plan");
+    REQUIRE(res1.predicted_final_position == 12, "Final position must be 12");
+    REQUIRE(res1.nodes_expanded == 0, "No nodes should be expanded when root is at goal");
+
+    // Case 2: Multi-step bounded beam search limits (K=2, H=4)
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 24, 128);
+    spark::BeamSearchConfig cfg2;
+    cfg2.beam_width = 2;
+    cfg2.max_depth = 4;
+    auto res2 = spark::PlanningEngine::beam_search(net, layout, root, 24, cfg2);
+
+    REQUIRE(res2.depth_reached <= 4, "Depth reached must be <= max_depth (4)");
+    REQUIRE(res2.best_plan.size() <= 4, "Best plan length must be <= max_depth (4)");
+    REQUIRE(res2.nodes_expanded > 0, "Nodes expanded must be > 0");
+    // At depth 1: 1 parent expanded (5 evaluations)
+    // At depth 2: <= 2 parents expanded (<= 10 evaluations)
+    // At depth 3: <= 2 parents expanded (<= 10 evaluations)
+    // At depth 4: <= 2 parents expanded (<= 10 evaluations)
+    // Total nodes expanded <= 1 + 2 + 2 + 2 = 7
+    REQUIRE(res2.nodes_expanded <= 1 + 2 * 3, "Nodes expanded must strictly obey beam width bound K=2");
+    REQUIRE(res2.model_evaluations == res2.nodes_expanded * 5, "Model evaluations must be exactly 5 per expanded node");
+
+    std::cout << "[Test] test_beam_search_core_bounded_limits PASSED." << std::endl;
+}
+
+// 10. Milestone 5E.2A: Test Identical Candidate Sequence Order Invariance
+void test_beam_search_identical_sequence_order_invariance() {
+    std::cout << "[Test] Running test_beam_search_identical_sequence_order_invariance..." << std::endl;
+
+    auto net = create_test_network(3033ULL);
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    uint32_t start_pos = 12;
+    uint32_t goal_pos = 2;
+    auto root = spark::PlanningEngine::create_cold_start_root(start_pos, goal_pos, 128);
+
+    // Sequence S: [Up, Right, Up]
+    // Evaluation Order 1: Evaluate sequence S directly
+    auto node_up_1    = spark::PlanningEngine::expand_branch(net, layout, root, spark::Action::Up, goal_pos);
+    auto node_right_1 = spark::PlanningEngine::expand_branch(net, layout, node_up_1, spark::Action::Right, goal_pos);
+    auto node_seq1    = spark::PlanningEngine::expand_branch(net, layout, node_right_1, spark::Action::Up, goal_pos);
+
+    // Evaluation Order 2: Evaluate a bunch of distractor branches FIRST, then evaluate sequence S
+    auto distractor_left = spark::PlanningEngine::expand_branch(net, layout, root, spark::Action::Left, goal_pos);
+    auto distractor_down = spark::PlanningEngine::expand_branch(net, layout, root, spark::Action::Down, goal_pos);
+    auto distractor_sub  = spark::PlanningEngine::expand_branch(net, layout, distractor_left, spark::Action::Stay, goal_pos);
+    (void)distractor_down;
+    (void)distractor_sub;
+
+    // Now evaluate sequence S
+    auto node_up_2    = spark::PlanningEngine::expand_branch(net, layout, root, spark::Action::Up, goal_pos);
+    auto node_right_2 = spark::PlanningEngine::expand_branch(net, layout, node_up_2, spark::Action::Right, goal_pos);
+    auto node_seq2    = spark::PlanningEngine::expand_branch(net, layout, node_right_2, spark::Action::Up, goal_pos);
+
+    // Bitwise identical verification on identical sequence executed under different contexts
+    REQUIRE(node_seq1.predicted_position == node_seq2.predicted_position,
+            "Predicted position must be bitwise identical regardless of prior evaluation order");
+    REQUIRE(node_seq1.score == node_seq2.score,
+            "Trajectory score must be bitwise identical regardless of prior evaluation order");
+    REQUIRE(node_seq1.recurrent_state == node_seq2.recurrent_state,
+            "Recurrent hidden state must be bitwise identical regardless of prior evaluation order");
+
+    std::cout << "[Test] test_beam_search_identical_sequence_order_invariance PASSED." << std::endl;
+}
+
+// 11. Milestone 5E.2A: Test Goal Candidate Preservation Across Search Depths
+void test_beam_search_goal_preservation_across_depths() {
+    std::cout << "[Test] Running test_beam_search_goal_preservation_across_depths..." << std::endl;
+
+    auto net = create_test_network(4044ULL);
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    // Let start be 12. Probe what position the network predicts for Action::Up
+    auto probe_root = spark::PlanningEngine::create_cold_start_root(12, 100, 128);
+    auto probe_child = spark::PlanningEngine::expand_branch(net, layout, probe_root, spark::Action::Up, 100);
+    uint32_t target_goal = probe_child.predicted_position;
+
+    // Now initialize a search targeting that exact predicted position
+    auto root = spark::PlanningEngine::create_cold_start_root(12, target_goal, 128);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 4;
+    cfg.return_first_goal = false; // Allow search to proceed to max_depth
+
+    auto res = spark::PlanningEngine::beam_search(net, layout, root, target_goal, cfg);
+
+    REQUIRE(res.goal_reached, "Goal must be reached");
+    REQUIRE(!res.completed_goal_candidates.empty(), "Completed goal candidates list must not be empty");
+    REQUIRE(res.best_node.goal_reached, "Best selected node must have reached goal");
+
+    // Verify the best plan reaches the target goal
+    REQUIRE(res.predicted_final_position == target_goal, "Predicted final position must match target goal");
+
+    std::cout << "[Test] test_beam_search_goal_preservation_across_depths PASSED." << std::endl;
+}
+
 int main() {
-    std::cout << "=== Running SPARK Milestone 5E.1 Planning Foundation Tests ===" << std::endl;
+    std::cout << "=== Running SPARK Milestone 5E.1 & 5E.2A Planning Tests ===" << std::endl;
 
     test_bfs_shortest_path_oracle();
     test_bfs_unreachable_and_obstacle_guards();
@@ -381,6 +505,11 @@ int main() {
     test_cold_start_vs_warmed_up_root();
     test_checkpoint_immutability();
 
-    std::cout << "All Milestone 5E.1 planning foundation tests passed successfully!" << std::endl;
+    // 5E.2A tests
+    test_beam_search_core_bounded_limits();
+    test_beam_search_identical_sequence_order_invariance();
+    test_beam_search_goal_preservation_across_depths();
+
+    std::cout << "All Milestone 5E.1 & 5E.2A planning tests passed successfully!" << std::endl;
     return 0;
 }

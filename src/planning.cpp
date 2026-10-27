@@ -1,4 +1,5 @@
 #include "spark/planning.hpp"
+#include "spark/metrics.hpp"
 #include <queue>
 #include <algorithm>
 #include <cmath>
@@ -459,6 +460,179 @@ std::vector<PlanningNode> PlanningEngine::expand_all_actions(
     }
 
     return children;
+}
+
+PlanningSearchResult PlanningEngine::beam_search(
+    const MicroUnitNetwork& net,
+    const GridWorldLayout& layout,
+    const PlanningNode& root,
+    uint32_t goal_pos,
+    const BeamSearchConfig& config
+) {
+    Timer timer;
+    PlanningSearchResult result;
+    result.beam_width = config.beam_width;
+    result.max_depth = config.max_depth;
+
+    if (config.beam_width == 0 || config.max_depth == 0) {
+        result.best_node = root;
+        result.best_plan = root.actions_from_root;
+        result.goal_reached = root.goal_reached;
+        result.predicted_final_position = root.predicted_position;
+        result.search_runtime_ms = timer.elapsed_ms();
+        return result;
+    }
+
+    // Check if root already at goal
+    if (root.predicted_position == goal_pos) {
+        result.best_node = root;
+        result.best_node.goal_reached = true;
+        result.best_plan = root.actions_from_root;
+        result.goal_reached = true;
+        result.predicted_final_position = root.predicted_position;
+        result.completed_goal_candidates.push_back(result.best_node);
+        result.search_runtime_ms = timer.elapsed_ms();
+        return result;
+    }
+
+    const std::vector<Action> candidate_actions = {
+        Action::Up,
+        Action::Down,
+        Action::Left,
+        Action::Right,
+        Action::Stay
+    };
+
+    std::vector<PlanningNode> current_beam;
+    current_beam.push_back(root);
+
+    // Track best overall non-root candidate across search
+    bool has_best_candidate = false;
+    PlanningNode best_overall_candidate;
+
+    for (uint32_t d = 1; d <= config.max_depth; ++d) {
+        result.depth_reached = d;
+        std::vector<PlanningNode> next_candidates;
+        next_candidates.reserve(current_beam.size() * candidate_actions.size());
+
+        for (const auto& parent : current_beam) {
+            // Do not expand candidates that have already reached the goal
+            if (parent.goal_reached) {
+                continue;
+            }
+
+            result.nodes_expanded++;
+
+            // Expand all 5 hypothetical actions
+            for (Action a : candidate_actions) {
+                PlanningNode child = expand_branch(
+                    net,
+                    layout,
+                    parent,
+                    a,
+                    goal_pos,
+                    config.max_depth,
+                    config.score_cfg
+                );
+                result.model_evaluations++;
+
+                // Track best non-root candidate
+                if (!has_best_candidate || child.is_better_than(best_overall_candidate)) {
+                    best_overall_candidate = child;
+                    has_best_candidate = true;
+                }
+
+                if (child.goal_reached) {
+                    result.completed_goal_candidates.push_back(child);
+                } else {
+                    next_candidates.push_back(std::move(child));
+                }
+            }
+        }
+
+        // Early stopping if goal reached and return_first_goal requested
+        if (config.return_first_goal && !result.completed_goal_candidates.empty()) {
+            break;
+        }
+
+        // If no unfinished candidates remain (all reached goal or dead ends)
+        if (next_candidates.empty()) {
+            break;
+        }
+
+        // Rank remaining unfinished candidates deterministically
+        std::sort(next_candidates.begin(), next_candidates.end(),
+            [](const PlanningNode& a, const PlanningNode& b) {
+                return a.is_better_than(b);
+            }
+        );
+
+        // Keep the strongest K unfinished candidates
+        if (next_candidates.size() > config.beam_width) {
+            next_candidates.resize(config.beam_width);
+        }
+
+        current_beam = std::move(next_candidates);
+    }
+
+    // Determine final best plan
+    if (!result.completed_goal_candidates.empty()) {
+        std::sort(result.completed_goal_candidates.begin(), result.completed_goal_candidates.end(),
+            [](const PlanningNode& a, const PlanningNode& b) {
+                return a.is_better_than(b);
+            }
+        );
+        result.best_node = result.completed_goal_candidates[0];
+        result.best_plan = result.best_node.actions_from_root;
+        result.goal_reached = true;
+        result.predicted_final_position = result.best_node.predicted_position;
+    } else if (has_best_candidate) {
+        result.best_node = best_overall_candidate;
+        result.best_plan = best_overall_candidate.actions_from_root;
+        result.goal_reached = false;
+        result.predicted_final_position = best_overall_candidate.predicted_position;
+    } else {
+        result.best_node = root;
+        result.best_plan = root.actions_from_root;
+        result.goal_reached = false;
+        result.predicted_final_position = root.predicted_position;
+    }
+
+    result.search_runtime_ms = timer.elapsed_ms();
+    return result;
+}
+
+PlanningSearchResult PlanningEngine::greedy_search(
+    const MicroUnitNetwork& net,
+    const GridWorldLayout& layout,
+    const PlanningNode& root,
+    uint32_t goal_pos,
+    const PlanningScoreConfig& score_cfg
+) {
+    BeamSearchConfig cfg;
+    cfg.beam_width = 1;
+    cfg.max_depth = 1;
+    cfg.score_cfg = score_cfg;
+    return beam_search(net, layout, root, goal_pos, cfg);
+}
+
+PlanningSearchResult PlanningEngine::exhaustive_search(
+    const MicroUnitNetwork& net,
+    const GridWorldLayout& layout,
+    const PlanningNode& root,
+    uint32_t goal_pos,
+    uint32_t depth,
+    const PlanningScoreConfig& score_cfg
+) {
+    if (depth > 4) {
+        throw std::invalid_argument("Exhaustive search depth must be <= 4 to prevent exponential blowup");
+    }
+    BeamSearchConfig cfg;
+    // 5^depth upper bound ensures unpruned breadth
+    cfg.beam_width = static_cast<uint32_t>(std::pow(5, depth));
+    cfg.max_depth = depth;
+    cfg.score_cfg = score_cfg;
+    return beam_search(net, layout, root, goal_pos, cfg);
 }
 
 } // namespace spark

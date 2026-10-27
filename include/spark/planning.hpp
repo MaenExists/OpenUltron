@@ -121,7 +121,31 @@ struct PlanningNode {
 };
 
 // ============================================================================
-// 5. Planning Engine & Recurrent-State Branching Foundation
+// 5. Search Configurations and Result Representation
+// ============================================================================
+struct BeamSearchConfig {
+    uint32_t beam_width = 4; // K: 2, 4, 8
+    uint32_t max_depth = 6;  // H: 2, 4, 6
+    PlanningScoreConfig score_cfg;
+    bool return_first_goal = false;
+};
+
+struct PlanningSearchResult {
+    PlanningNode best_node;
+    std::vector<Action> best_plan;
+    bool goal_reached = false;
+    uint32_t predicted_final_position = 0;
+    size_t nodes_expanded = 0;
+    size_t model_evaluations = 0;
+    std::vector<PlanningNode> completed_goal_candidates;
+    double search_runtime_ms = 0.0;
+    uint32_t depth_reached = 0;
+    uint32_t beam_width = 0;
+    uint32_t max_depth = 0;
+};
+
+// ============================================================================
+// 6. Planning Engine & Recurrent-State Branching Foundation
 // ============================================================================
 class PlanningEngine {
 public:
@@ -175,6 +199,34 @@ public:
         uint32_t max_steps = 16,
         const PlanningScoreConfig& score_cfg = PlanningScoreConfig(),
         int32_t parent_index = -1
+    );
+
+    // Bounded Beam Search Planner (Milestone 5E.2)
+    static PlanningSearchResult beam_search(
+        const MicroUnitNetwork& net,
+        const GridWorldLayout& layout,
+        const PlanningNode& root,
+        uint32_t goal_pos,
+        const BeamSearchConfig& config
+    );
+
+    // Strategy A: One-step greedy lookahead (evaluates immediate 5 actions from root)
+    static PlanningSearchResult greedy_search(
+        const MicroUnitNetwork& net,
+        const GridWorldLayout& layout,
+        const PlanningNode& root,
+        uint32_t goal_pos,
+        const PlanningScoreConfig& score_cfg = PlanningScoreConfig()
+    );
+
+    // Strategy C: Shallow exhaustive search (depth 1 to 3)
+    static PlanningSearchResult exhaustive_search(
+        const MicroUnitNetwork& net,
+        const GridWorldLayout& layout,
+        const PlanningNode& root,
+        uint32_t goal_pos,
+        uint32_t depth = 3,
+        const PlanningScoreConfig& score_cfg = PlanningScoreConfig()
     );
 };
 
