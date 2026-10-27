@@ -1319,8 +1319,121 @@ void test_trained_checkpoint_cold_vs_warm_root_generation() {
     std::cout << "[Test] test_trained_checkpoint_cold_vs_warm_root_generation PASSED." << std::endl;
 }
 
+// 29. Milestone 5E.2D.2: Open-loop simulator execution and path efficiency
+void test_open_loop_plan_execution() {
+    std::cout << "[Test] Running test_open_loop_plan_execution..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    spark::PlanningEpisode ep;
+    ep.start_pos = 0;
+    ep.goal_pos = 2;
+    ep.layout = layout;
+    ep.shortest_path_length = 2;
+    ep.reference_shortest_path = {spark::Action::Right, spark::Action::Right};
+
+    spark::PlanningSearchResult s_res;
+    s_res.best_plan = {spark::Action::Right, spark::Action::Right};
+    s_res.predicted_trajectory = {0, 1, 2};
+    s_res.goal_reached = true;
+    s_res.predicted_final_position = 2;
+    s_res.max_depth = 4;
+
+    auto exec_res = spark::PlanningEngine::execute_plan_open_loop(ep, s_res, true);
+
+    REQUIRE(exec_res.actual_goal_reached, "Actual goal must be reached in real environment");
+    REQUIRE(exec_res.predicted_actual_agreement, "Predicted and actual outcomes must agree");
+    REQUIRE(exec_res.first_divergence_step == -1, "No divergence step should occur");
+    REQUIRE(exec_res.actual_trajectory.size() == 3, "Actual trajectory must have 3 positions");
+    REQUIRE(exec_res.actual_trajectory[0] == 0 && exec_res.actual_trajectory[1] == 1 && exec_res.actual_trajectory[2] == 2,
+            "Actual trajectory must be [0, 1, 2]");
+    REQUIRE(std::abs(exec_res.path_efficiency - 1.0f) < 1e-5f, "Optimal route path efficiency must be 1.0");
+    REQUIRE(exec_res.failure_category == spark::FailureCategory::None, "Success must have FailureCategory::None");
+
+    std::cout << "[Test] test_open_loop_plan_execution PASSED." << std::endl;
+}
+
+// 30. Milestone 5E.2D.2: Failure categorization and model divergence detection
+void test_failure_categorization_and_divergence() {
+    std::cout << "[Test] Running test_failure_categorization_and_divergence..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+    layout.obstacles[1] = 1; // Obstacle at (0,1)=1
+
+    spark::PlanningEpisode ep;
+    ep.start_pos = 0;
+    ep.goal_pos = 2;
+    ep.layout = layout;
+    ep.shortest_path_length = 4; // Detour around cell 1
+    ep.reference_shortest_path = {spark::Action::Down, spark::Action::Right, spark::Action::Right, spark::Action::Up};
+
+    // Plan hallucinating movement through obstacle cell 1
+    spark::PlanningSearchResult s_res;
+    s_res.best_plan = {spark::Action::Right, spark::Action::Right};
+    s_res.predicted_trajectory = {0, 1, 2};
+    s_res.goal_reached = true;
+    s_res.predicted_final_position = 2;
+    s_res.max_depth = 4;
+
+    auto exec_res = spark::PlanningEngine::execute_plan_open_loop(ep, s_res, true);
+
+    REQUIRE(!exec_res.actual_goal_reached, "Actual goal must NOT be reached when hitting obstacle");
+    REQUIRE(!exec_res.predicted_actual_agreement, "Predicted and actual outcomes must disagree");
+    REQUIRE(exec_res.first_divergence_step == 1, "Divergence must occur at step 1 where model hallucinated cell 1");
+    REQUIRE(exec_res.actual_trajectory[1] == 0, "Actual agent must remain blocked at position 0");
+    REQUIRE(exec_res.failure_category == spark::FailureCategory::ObstacleHallucination,
+            "Failure category must be ObstacleHallucination");
+    REQUIRE(exec_res.path_efficiency == 0.0f, "Failed plan must have efficiency 0.0");
+
+    std::cout << "[Test] test_failure_categorization_and_divergence PASSED." << std::endl;
+}
+
+// 31. Milestone 5E.2D.2: Episode classification across Groups A, B, C, D
+void test_episode_group_classification() {
+    std::cout << "[Test] Running test_episode_group_classification..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    // Group A: Direct route (shortest path == Manhattan distance)
+    spark::PlanningEpisode ep_a;
+    ep_a.start_pos = 0;
+    ep_a.goal_pos = 2;
+    ep_a.shortest_path_length = 2;
+    ep_a.reference_shortest_path = {spark::Action::Right, spark::Action::Right};
+    ep_a.layout = layout;
+    REQUIRE(spark::PlanningEngine::classify_episode(ep_a, 4) == spark::EpisodeGroup::GroupA_Direct,
+            "Episode with path == Manhattan distance must be Group A");
+
+    // Group D: Longer route (shortest path > max_depth)
+    REQUIRE(spark::PlanningEngine::classify_episode(ep_a, 1) == spark::EpisodeGroup::GroupD_Longer,
+            "Episode with path > max_depth must be Group D");
+
+    // Group B: Detour route
+    layout.obstacles[7] = 1;
+    spark::PlanningEpisode ep_b;
+    ep_b.start_pos = 2;
+    ep_b.goal_pos = 12;
+    ep_b.shortest_path_length = 4; // Manhattan is 2, path is 4
+    ep_b.reference_shortest_path = {spark::Action::Left, spark::Action::Down, spark::Action::Down, spark::Action::Right};
+    ep_b.layout = layout;
+    // Step 1: from 2 Left to 1 -> Manhattan to 12 is |0-2| + |1-2| = 2 + 1 = 3 > 2 (first step increases distance!)
+    REQUIRE(spark::PlanningEngine::classify_episode(ep_b, 6) == spark::EpisodeGroup::GroupC_Misleading,
+            "Episode where first step increases distance must be Group C");
+
+    std::cout << "[Test] test_episode_group_classification PASSED." << std::endl;
+}
+
 int main() {
-    std::cout << "=== Running SPARK Milestone 5E.1, 5E.2 (A/B/C), and 5E.2D.1 Planning Tests ===" << std::endl;
+    std::cout << "=== Running SPARK Milestone 5E.1, 5E.2 (A/B/C), and 5E.2D Planning Tests ===" << std::endl;
 
     test_bfs_shortest_path_oracle();
     test_bfs_unreachable_and_obstacle_guards();
@@ -1359,6 +1472,11 @@ int main() {
     test_trained_checkpoint_beam_search_planning();
     test_trained_checkpoint_cold_vs_warm_root_generation();
 
-    std::cout << "All Milestone 5E.1, 5E.2A, 5E.2B, 5E.2C, and 5E.2D.1 planning tests passed successfully!" << std::endl;
+    // 5E.2D.2 tests
+    test_open_loop_plan_execution();
+    test_failure_categorization_and_divergence();
+    test_episode_group_classification();
+
+    std::cout << "All Milestone 5E.1, 5E.2 (A/B/C), and 5E.2D planning tests passed successfully!" << std::endl;
     return 0;
 }

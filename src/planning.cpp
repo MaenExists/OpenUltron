@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <fstream>
+#include <iostream>
 #include <iomanip>
 #include <stdexcept>
 
@@ -331,6 +333,7 @@ PlanningNode PlanningEngine::create_cold_start_root(
     root.predicted_position = start_pos;
     root.recurrent_state.assign(num_units, 0.0f); // Cold start: zero initial hidden state
     root.actions_from_root.clear();
+    root.predicted_trajectory = {start_pos};
     root.parent_idx = -1;
     root.action_from_parent = Action::Stay;
     root.depth = 0;
@@ -356,6 +359,7 @@ PlanningNode PlanningEngine::create_warmed_up_root(
     root.predicted_position = current_pos;
     root.recurrent_state = current_h; // Warmed-up: preserves historical observation context
     root.actions_from_root.clear();
+    root.predicted_trajectory = {current_pos};
     root.parent_idx = -1;
     root.action_from_parent = Action::Stay;
     root.depth = 0;
@@ -413,6 +417,7 @@ PlanningNode PlanningEngine::expand_branch_custom(
     child.action_from_parent = action;
     child.actions_from_root = parent.actions_from_root;
     child.actions_from_root.push_back(action);
+    child.predicted_trajectory = parent.predicted_trajectory;
 
     // Encode input strictly from parent's predicted position and layout
     std::vector<float> x;
@@ -442,6 +447,7 @@ PlanningNode PlanningEngine::expand_branch_custom(
     );
 
     child.predicted_position = pred_pos;
+    child.predicted_trajectory.push_back(pred_pos);
     child.recurrent_state = std::move(child_state);
     child.goal_reached = (pred_pos == goal_pos);
     child.manhattan_to_goal = compute_manhattan_distance(pred_pos, goal_pos, layout.width);
@@ -621,6 +627,7 @@ PlanningSearchResult PlanningEngine::beam_search_custom(
     if (config.beam_width == 0 || config.max_depth == 0) {
         result.best_node = root;
         result.best_plan = root.actions_from_root;
+        result.predicted_trajectory = root.predicted_trajectory;
         result.goal_reached = root.goal_reached;
         result.predicted_final_position = root.predicted_position;
         result.search_runtime_ms = timer.elapsed_ms();
@@ -632,6 +639,7 @@ PlanningSearchResult PlanningEngine::beam_search_custom(
         result.best_node = root;
         result.best_node.goal_reached = true;
         result.best_plan = root.actions_from_root;
+        result.predicted_trajectory = root.predicted_trajectory;
         result.goal_reached = true;
         result.predicted_final_position = root.predicted_position;
         result.completed_goal_candidates.push_back(result.best_node);
@@ -743,6 +751,7 @@ PlanningSearchResult PlanningEngine::beam_search_custom(
         result.predicted_final_position = root.predicted_position;
     }
 
+    result.predicted_trajectory = result.best_node.predicted_trajectory;
     result.search_runtime_ms = timer.elapsed_ms();
     return result;
 }
@@ -796,6 +805,412 @@ PlanningSearchResult PlanningEngine::exhaustive_search_custom(
     cfg.max_depth = depth;
     cfg.score_cfg = score_cfg;
     return beam_search_custom(predictor, layout, root, goal_pos, cfg);
+}
+
+EpisodeGroup PlanningEngine::classify_episode(const PlanningEpisode& episode, uint32_t max_depth) {
+    uint32_t D0 = compute_manhattan_distance(episode.start_pos, episode.goal_pos, episode.layout.width);
+    if (episode.shortest_path_length > max_depth) {
+        return EpisodeGroup::GroupD_Longer;
+    }
+    if (episode.shortest_path_length == D0) {
+        return EpisodeGroup::GroupA_Direct;
+    }
+    if (!episode.reference_shortest_path.empty()) {
+        Action a0 = episode.reference_shortest_path[0];
+        auto tr = GridWorldEnv::simulate_transition(
+            episode.start_pos, a0, episode.layout.obstacles, episode.layout.width, episode.layout.height
+        );
+        uint32_t D1 = compute_manhattan_distance(tr.to_pos, episode.goal_pos, episode.layout.width);
+        if (D1 > D0) {
+            return EpisodeGroup::GroupC_Misleading;
+        }
+    }
+    return EpisodeGroup::GroupB_Detour;
+}
+
+PlanExecutionResult PlanningEngine::execute_plan_open_loop(
+    const PlanningEpisode& episode,
+    const PlanningSearchResult& search_res,
+    bool cold_start
+) {
+    PlanExecutionResult res;
+    res.episode = episode;
+    res.executed_plan = search_res.best_plan;
+    res.predicted_trajectory = search_res.predicted_trajectory;
+    res.predicted_goal_reached = search_res.goal_reached;
+    res.nodes_expanded = search_res.nodes_expanded;
+    res.model_evaluations = search_res.model_evaluations;
+    res.search_runtime_ms = search_res.search_runtime_ms;
+    res.mean_step_confidence = search_res.best_node.mean_step_confidence;
+    res.final_score = search_res.best_node.score;
+    res.cold_start = cold_start;
+    res.group = classify_episode(episode, search_res.max_depth);
+
+    res.actual_trajectory.push_back(episode.start_pos);
+    uint32_t curr_pos = episode.start_pos;
+    int32_t first_div = -1;
+    bool had_discrepancy = false;
+    bool hit_obstacle_hallucination = false;
+
+    for (size_t t = 0; t < search_res.best_plan.size(); ++t) {
+        Action a = search_res.best_plan[t];
+        auto trans = GridWorldEnv::simulate_transition(
+            curr_pos, a, episode.layout.obstacles, episode.layout.width, episode.layout.height
+        );
+        curr_pos = trans.to_pos;
+        res.actual_trajectory.push_back(curr_pos);
+
+        uint32_t pred_t = (t + 1 < search_res.predicted_trajectory.size())
+            ? search_res.predicted_trajectory[t + 1]
+            : search_res.predicted_final_position;
+
+        if (first_div == -1 && pred_t != curr_pos) {
+            first_div = static_cast<int32_t>(t + 1);
+        }
+        if (pred_t < episode.layout.obstacles.size() && episode.layout.obstacles[pred_t] != 0) {
+            hit_obstacle_hallucination = true;
+        }
+        if (pred_t != curr_pos) {
+            had_discrepancy = true;
+        }
+    }
+
+    res.first_divergence_step = first_div;
+    res.actual_goal_reached = (curr_pos == episode.goal_pos);
+    res.predicted_actual_agreement = (res.predicted_goal_reached == res.actual_goal_reached);
+
+    if (res.actual_goal_reached && episode.shortest_path_length > 0) {
+        res.path_efficiency = static_cast<float>(search_res.best_plan.size()) / static_cast<float>(episode.shortest_path_length);
+    } else {
+        res.path_efficiency = 0.0f;
+    }
+
+    // Failure categorization
+    if (res.actual_goal_reached) {
+        res.failure_category = FailureCategory::None;
+    } else if (episode.shortest_path_length > search_res.max_depth) {
+        res.failure_category = FailureCategory::DepthInsufficient;
+    } else if (res.predicted_goal_reached && !res.actual_goal_reached) {
+        if (hit_obstacle_hallucination) {
+            res.failure_category = FailureCategory::ObstacleHallucination;
+        } else {
+            res.failure_category = FailureCategory::FalseGoalPrediction;
+        }
+    } else if (hit_obstacle_hallucination) {
+        res.failure_category = FailureCategory::ObstacleHallucination;
+    } else if (had_discrepancy) {
+        res.failure_category = FailureCategory::IncorrectPosition;
+    } else {
+        res.failure_category = FailureCategory::PrunedValidRoute;
+    }
+
+    return res;
+}
+
+// ============================================================================
+// 6. Scientific Planning Evaluator Implementation
+// ============================================================================
+void PlanningEvaluationSummary::print_summary(const std::string& title) const {
+    std::cout << "\n=======================================================\n"
+              << " " << title << "\n"
+              << "=======================================================\n";
+    std::cout << " Total Episodes               : " << total_episodes << "\n";
+    std::cout << " Solvable (L_oracle <= H)     : " << solvable_episodes
+              << " (" << std::fixed << std::setprecision(1)
+              << (total_episodes > 0 ? (100.0 * solvable_episodes / total_episodes) : 0.0) << "%)\n";
+    std::cout << " Actual Goal Success Rate     : " << actual_goals_reached << "/" << total_episodes
+              << " (" << std::setprecision(2)
+              << (total_episodes > 0 ? (100.0 * actual_goals_reached / total_episodes) : 0.0) << "%)\n";
+    std::cout << " Solvable Actual Success Rate : " << solvable_actual_success << "/" << solvable_episodes
+              << " (" << std::setprecision(2)
+              << (solvable_episodes > 0 ? (100.0 * solvable_actual_success / solvable_episodes) : 0.0) << "%)\n";
+    std::cout << " Predicted Goal Success Rate  : " << predicted_goals_reached << "/" << total_episodes
+              << " (" << std::setprecision(2)
+              << (total_episodes > 0 ? (100.0 * predicted_goals_reached / total_episodes) : 0.0) << "%)\n";
+    std::cout << " Predicted/Actual Agreement   : " << predicted_and_actual_success << "/" << total_episodes
+              << " (" << std::setprecision(2)
+              << (total_episodes > 0 ? (100.0 * predicted_and_actual_success / total_episodes) : 0.0) << "%)\n";
+    std::cout << " Mean Path Efficiency (succ)  : " << std::setprecision(3) << mean_path_efficiency << "\n";
+    std::cout << " Mean Divergence Step (div)   : " << std::setprecision(2) << mean_divergence_step << "\n";
+    std::cout << " Total Nodes Expanded         : " << total_nodes_expanded << "\n";
+    std::cout << " Total Model Evaluations      : " << total_model_evaluations << "\n";
+    std::cout << " Total Runtime                : " << std::setprecision(2) << total_runtime_ms << " ms\n";
+
+    std::cout << "\n--- Failure Mode Categorization ---\n";
+    const std::vector<FailureCategory> cats = {
+        FailureCategory::None,
+        FailureCategory::ObstacleHallucination,
+        FailureCategory::IncorrectPosition,
+        FailureCategory::DepthInsufficient,
+        FailureCategory::PrunedValidRoute,
+        FailureCategory::FalseGoalPrediction
+    };
+    for (auto c : cats) {
+        size_t count = failure_counts.count(c) ? failure_counts.at(c) : 0;
+        double pct = total_episodes > 0 ? (100.0 * count / total_episodes) : 0.0;
+        std::cout << "  " << std::left << std::setw(26) << failure_category_name(c)
+                  << ": " << std::right << std::setw(4) << count
+                  << " (" << std::fixed << std::setprecision(1) << pct << "%)\n";
+    }
+
+    std::cout << "\n--- Episode Group Breakdown ---\n";
+    const std::vector<EpisodeGroup> grps = {
+        EpisodeGroup::GroupA_Direct,
+        EpisodeGroup::GroupB_Detour,
+        EpisodeGroup::GroupC_Misleading,
+        EpisodeGroup::GroupD_Longer
+    };
+    for (auto g : grps) {
+        size_t total_g = group_totals.count(g) ? group_totals.at(g) : 0;
+        size_t succ_g = group_actual_success.count(g) ? group_actual_success.at(g) : 0;
+        double pct = total_g > 0 ? (100.0 * succ_g / total_g) : 0.0;
+        std::cout << "  " << std::left << std::setw(24) << episode_group_name(g)
+                  << ": " << std::right << std::setw(3) << succ_g << "/" << std::setw(3) << total_g
+                  << " (" << std::fixed << std::setprecision(1) << pct << "%)\n";
+    }
+    std::cout << "=======================================================\n";
+}
+
+PlanningEvaluationSummary PlanningEvaluator::evaluate_strategy(
+    const MicroUnitNetwork& net,
+    const std::vector<PlanningEpisode>& episodes,
+    uint32_t beam_width,
+    uint32_t max_depth,
+    bool cold_start,
+    const PlanningScoreConfig& score_cfg
+) {
+    PlanningEvaluationSummary summary;
+    summary.total_episodes = episodes.size();
+
+    BeamSearchConfig cfg;
+    cfg.beam_width = beam_width;
+    cfg.max_depth = max_depth;
+    cfg.score_cfg = score_cfg;
+    cfg.return_first_goal = false;
+
+    double sum_eff = 0.0;
+    double sum_div = 0.0;
+
+    for (const auto& ep : episodes) {
+        PlanningSearchResult s_res;
+        if (cold_start) {
+            auto root = PlanningEngine::create_cold_start_root(ep.start_pos, ep.goal_pos, 128, max_depth, score_cfg);
+            if (beam_width == 1 && max_depth == 1) {
+                s_res = PlanningEngine::greedy_search(net, ep.layout, root, ep.goal_pos, score_cfg);
+            } else {
+                s_res = PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+            }
+        } else {
+            // Legitimate warm state: observe initial state s_0 with Action::Stay to compute h(1)
+            std::vector<float> x_prior;
+            PlanningEngine::encode_model_input(ep.start_pos, ep.layout, Action::Stay, x_prior);
+            std::vector<float> h_out, logits, probs;
+            net.forward_step_branching(std::vector<float>(128, 0.0f), x_prior, h_out, logits, probs, ReadoutMode::Softmax);
+
+            auto root = PlanningEngine::create_warmed_up_root(ep.start_pos, ep.goal_pos, h_out, max_depth, score_cfg);
+            if (beam_width == 1 && max_depth == 1) {
+                s_res = PlanningEngine::greedy_search(net, ep.layout, root, ep.goal_pos, score_cfg);
+            } else {
+                s_res = PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+            }
+        }
+
+        auto exec_res = PlanningEngine::execute_plan_open_loop(ep, s_res, cold_start);
+
+        summary.total_nodes_expanded += exec_res.nodes_expanded;
+        summary.total_model_evaluations += exec_res.model_evaluations;
+        summary.total_runtime_ms += exec_res.search_runtime_ms;
+
+        if (exec_res.predicted_goal_reached) summary.predicted_goals_reached++;
+        if (exec_res.actual_goal_reached) summary.actual_goals_reached++;
+        if (exec_res.predicted_actual_agreement) summary.predicted_and_actual_success++;
+
+        bool is_solvable = (ep.shortest_path_length <= max_depth);
+        if (is_solvable) {
+            summary.solvable_episodes++;
+            if (exec_res.actual_goal_reached) summary.solvable_actual_success++;
+        } else {
+            summary.unsolvable_episodes++;
+            if (exec_res.actual_goal_reached) summary.unsolvable_actual_success++;
+        }
+
+        if (exec_res.actual_goal_reached && exec_res.path_efficiency > 0.0f) {
+            sum_eff += exec_res.path_efficiency;
+            summary.efficiency_count++;
+        }
+
+        if (exec_res.first_divergence_step > 0) {
+            sum_div += exec_res.first_divergence_step;
+            summary.divergence_count++;
+        }
+
+        summary.failure_counts[exec_res.failure_category]++;
+        summary.group_totals[exec_res.group]++;
+        if (exec_res.actual_goal_reached) {
+            summary.group_actual_success[exec_res.group]++;
+        }
+    }
+
+    if (summary.efficiency_count > 0) {
+        summary.mean_path_efficiency = sum_eff / summary.efficiency_count;
+    }
+    if (summary.divergence_count > 0) {
+        summary.mean_divergence_step = sum_div / summary.divergence_count;
+    }
+
+    return summary;
+}
+
+PlanningEvaluationSummary PlanningEvaluator::evaluate_oracle(
+    const std::vector<PlanningEpisode>& episodes,
+    uint32_t max_depth
+) {
+    PlanningEvaluationSummary summary;
+    summary.total_episodes = episodes.size();
+
+    double sum_eff = 0.0;
+    for (const auto& ep : episodes) {
+        auto bfs = BFSSolver::find_shortest_path(ep.layout, ep.start_pos, ep.goal_pos);
+        bool solvable = (bfs.reachable && bfs.shortest_path_length <= max_depth);
+        auto grp = PlanningEngine::classify_episode(ep, max_depth);
+        summary.group_totals[grp]++;
+
+        if (solvable) {
+            summary.solvable_episodes++;
+            summary.solvable_actual_success++;
+            summary.actual_goals_reached++;
+            summary.predicted_goals_reached++;
+            summary.predicted_and_actual_success++;
+            sum_eff += 1.0;
+            summary.efficiency_count++;
+            summary.group_actual_success[grp]++;
+            summary.failure_counts[FailureCategory::None]++;
+        } else {
+            summary.unsolvable_episodes++;
+            summary.failure_counts[FailureCategory::DepthInsufficient]++;
+        }
+    }
+
+    if (summary.efficiency_count > 0) {
+        summary.mean_path_efficiency = sum_eff / summary.efficiency_count;
+    }
+    return summary;
+}
+
+void PlanningEvaluator::run_milestone5e2d_benchmark(
+    const std::string& checkpoint_path,
+    const std::string& csv_path
+) {
+    std::cout << "\n=======================================================\n"
+              << " SPARK Milestone 5E.2D — Scientific Planning Benchmark\n"
+              << "=======================================================\n"
+              << " Checkpoint: " << checkpoint_path << "\n";
+
+    spark::SparseGraphConfig g_cfg;
+    spark::NetworkConfig n_cfg;
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+
+    if (!MicroUnitNetwork::load_checkpoint(checkpoint_path, net)) {
+        throw std::runtime_error("Could not load checkpoint from " + checkpoint_path);
+    }
+
+    // Splits: 100 train, 20 val, 20 test
+    auto splits = GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+
+    // 1. Validation set (Smoke test: 20 episodes on validation layouts)
+    std::cout << " Generating 20 validation episodes on validation layouts..." << std::endl;
+    auto val_episodes = PlanningEpisodeGenerator::generate_dataset(splits.val_layouts, 1, 42ULL, 6, 1);
+
+    // 2. Held-out test set (40 episodes on unseen test layouts)
+    std::cout << " Generating 40 test episodes on unseen held-out test layouts..." << std::endl;
+    auto test_episodes = PlanningEpisodeGenerator::generate_dataset(splits.test_layouts, 2, 8888ULL, 6, 1);
+
+    // CSV Header
+    std::ofstream csv(csv_path);
+    if (!csv.is_open()) {
+        throw std::runtime_error("Could not open CSV file for writing: " + csv_path);
+    }
+    csv << "Split,Strategy,BeamWidth,MaxDepth,Condition,TotalEpisodes,SolvableEpisodes,"
+        << "SolvableActualSuccessRate,OverallActualSuccessRate,PredictedSuccessRate,"
+        << "AgreementRate,MeanPathEfficiency,MeanDivergenceStep,MeanRuntimeMs,NodesExpanded,"
+        << "ObstacleHallucinations,IncorrectPositions,DepthInsufficient,PrunedValidRoutes,FalseGoalPredictions\n";
+
+    struct ConfigToEval {
+        std::string name;
+        uint32_t beam_width;
+        uint32_t max_depth;
+        bool is_oracle;
+    };
+
+    const std::vector<ConfigToEval> configs = {
+        {"GreedyLookahead", 1, 1, false},
+        {"Beam_K2_H2", 2, 2, false},
+        {"Beam_K2_H4", 2, 4, false},
+        {"Beam_K2_H6", 2, 6, false},
+        {"Beam_K4_H2", 4, 2, false},
+        {"Beam_K4_H4", 4, 4, false},
+        {"Beam_K4_H6", 4, 6, false},
+        {"Beam_K8_H2", 8, 2, false},
+        {"Beam_K8_H4", 8, 4, false},
+        {"Beam_K8_H6", 8, 6, false},
+        {"Oracle_H2", 0, 2, true},
+        {"Oracle_H4", 0, 4, true},
+        {"Oracle_H6", 0, 6, true}
+    };
+
+    auto run_and_log = [&](const std::string& split_name, const std::vector<PlanningEpisode>& eps) {
+        for (const auto& c : configs) {
+            std::vector<bool> conditions = {true}; // Cold start
+            if (!c.is_oracle) conditions.push_back(false); // Warm state
+
+            for (bool cold : conditions) {
+                std::string cond_name = c.is_oracle ? "N/A" : (cold ? "ColdStart" : "WarmedUp");
+                PlanningEvaluationSummary sum;
+                if (c.is_oracle) {
+                    sum = evaluate_oracle(eps, c.max_depth);
+                } else {
+                    sum = evaluate_strategy(net, eps, c.beam_width, c.max_depth, cold);
+                }
+
+                double solv_succ_rate = sum.solvable_episodes > 0 ? (100.0 * sum.solvable_actual_success / sum.solvable_episodes) : 0.0;
+                double actual_succ_rate = sum.total_episodes > 0 ? (100.0 * sum.actual_goals_reached / sum.total_episodes) : 0.0;
+                double pred_succ_rate = sum.total_episodes > 0 ? (100.0 * sum.predicted_goals_reached / sum.total_episodes) : 0.0;
+                double agree_rate = sum.total_episodes > 0 ? (100.0 * sum.predicted_and_actual_success / sum.total_episodes) : 0.0;
+
+                csv << split_name << "," << c.name << "," << c.beam_width << "," << c.max_depth << ","
+                    << cond_name << "," << sum.total_episodes << "," << sum.solvable_episodes << ","
+                    << std::fixed << std::setprecision(2) << solv_succ_rate << ","
+                    << actual_succ_rate << "," << pred_succ_rate << "," << agree_rate << ","
+                    << std::setprecision(3) << sum.mean_path_efficiency << ","
+                    << std::setprecision(2) << sum.mean_divergence_step << ","
+                    << (sum.total_episodes > 0 ? sum.total_runtime_ms / sum.total_episodes : 0.0) << ","
+                    << sum.total_nodes_expanded << ","
+                    << sum.failure_counts[FailureCategory::ObstacleHallucination] << ","
+                    << sum.failure_counts[FailureCategory::IncorrectPosition] << ","
+                    << sum.failure_counts[FailureCategory::DepthInsufficient] << ","
+                    << sum.failure_counts[FailureCategory::PrunedValidRoute] << ","
+                    << sum.failure_counts[FailureCategory::FalseGoalPrediction] << "\n";
+
+                std::cout << " [" << split_name << "] " << std::left << std::setw(18) << c.name
+                          << " | " << std::setw(10) << cond_name
+                          << " | Solvable: " << std::right << std::setw(5) << std::fixed << std::setprecision(1) << solv_succ_rate << "%"
+                          << " | Overall: " << std::setw(5) << std::fixed << std::setprecision(1) << actual_succ_rate << "%"
+                          << " | Pred: " << std::setw(5) << std::fixed << std::setprecision(1) << pred_succ_rate << "%"
+                          << " | Eff: " << std::setprecision(2) << sum.mean_path_efficiency
+                          << " | Runtime: " << std::setprecision(1) << sum.total_runtime_ms << " ms"
+                          << std::endl;
+            }
+        }
+    };
+
+    std::cout << "\n--- Running Smoke Evaluation on Validation Layouts ---" << std::endl;
+    run_and_log("Validation", val_episodes);
+
+    std::cout << "\n--- Running Held-Out Evaluation on Test Layouts ---" << std::endl;
+    run_and_log("HeldOutTest", test_episodes);
+
+    csv.close();
+    std::cout << "\nResults exported successfully to: " << csv_path << std::endl;
 }
 
 } // namespace spark

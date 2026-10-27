@@ -786,6 +786,9 @@ void run_plan_beam_cmd(int argc, char* argv[]) {
     uint32_t max_depth = 4;
     size_t num_episodes = 5;
     std::string checkpoint_path = "checkpoints/world_model_best.spark";
+    std::string csv_path = "experiments/results/phase5/milestone5e2d_planning_eval.csv";
+    bool run_benchmark = false;
+    bool cold_start = true;
 
     for (int i = 2; i < argc; ++i) {
         std::string arg = argv[i];
@@ -797,12 +800,24 @@ void run_plan_beam_cmd(int argc, char* argv[]) {
             num_episodes = std::stoul(argv[++i]);
         } else if (arg == "--checkpoint" && i + 1 < argc) {
             checkpoint_path = argv[++i];
+        } else if (arg == "--csv" && i + 1 < argc) {
+            csv_path = argv[++i];
+        } else if (arg == "--benchmark") {
+            run_benchmark = true;
+        } else if (arg == "--warm") {
+            cold_start = false;
         }
+    }
+
+    if (run_benchmark) {
+        spark::PlanningEvaluator::run_milestone5e2d_benchmark(checkpoint_path, csv_path);
+        return;
     }
 
     std::cout << "Configuration: Beam Width K=" << beam_width
               << ", Max Depth H=" << max_depth
-              << ", Episodes=" << num_episodes << std::endl;
+              << ", Episodes=" << num_episodes
+              << ", Mode=" << (cold_start ? "ColdStart" : "WarmedUp") << std::endl;
 
     // Load World Model
     spark::SparseGraphConfig g_cfg;
@@ -832,31 +847,51 @@ void run_plan_beam_cmd(int argc, char* argv[]) {
     cfg.beam_width = beam_width;
     cfg.max_depth = max_depth;
 
-    size_t successful_plans = 0;
-    std::cout << "\nEvaluating Bounded Beam Search Across Episodes:" << std::endl;
+    size_t pred_success = 0;
+    size_t actual_success = 0;
+    std::cout << "\nEvaluating Bounded Beam Search Across Episodes (Planning & Open-Loop Execution):" << std::endl;
     for (size_t ep_idx = 0; ep_idx < std::min(num_episodes, episodes.size()); ++ep_idx) {
         const auto& ep = episodes[ep_idx];
-        auto root = spark::PlanningEngine::create_cold_start_root(ep.start_pos, ep.goal_pos, 128, max_depth, cfg.score_cfg);
-        auto res = spark::PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+        spark::PlanningSearchResult res;
+        if (cold_start) {
+            auto root = spark::PlanningEngine::create_cold_start_root(ep.start_pos, ep.goal_pos, 128, max_depth, cfg.score_cfg);
+            res = spark::PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+        } else {
+            std::vector<float> x_prior;
+            spark::PlanningEngine::encode_model_input(ep.start_pos, ep.layout, spark::Action::Stay, x_prior);
+            std::vector<float> h_out, logits, probs;
+            net.forward_step_branching(std::vector<float>(128, 0.0f), x_prior, h_out, logits, probs, spark::ReadoutMode::Softmax);
+            auto root = spark::PlanningEngine::create_warmed_up_root(ep.start_pos, ep.goal_pos, h_out, max_depth, cfg.score_cfg);
+            res = spark::PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+        }
 
-        std::cout << "  Episode " << ep_idx + 1 << ": Start=(" << (ep.start_pos/5) << "," << (ep.start_pos%5) << ")"
+        auto exec_res = spark::PlanningEngine::execute_plan_open_loop(ep, res, cold_start);
+
+        std::cout << "  Episode " << ep_idx + 1 << " [" << spark::episode_group_name(exec_res.group) << "]: "
+                  << "Start=(" << (ep.start_pos/5) << "," << (ep.start_pos%5) << ")"
                   << " -> Goal=(" << (ep.goal_pos/5) << "," << (ep.goal_pos%5) << ")"
                   << " | Ref BFS: " << ep.shortest_path_length << " steps\n";
-        std::cout << "    Plan Found: " << res.best_plan.size() << " steps (";
+        std::cout << "    Plan Found : " << res.best_plan.size() << " steps (";
         for (auto a : res.best_plan) std::cout << spark::action_name(a) << " ";
-        std::cout << ") | Goal Reached: " << (res.goal_reached ? "YES" : "NO")
-                  << " | Final Pos: (" << (res.predicted_final_position/5) << "," << (res.predicted_final_position%5) << ")"
-                  << " | Score: " << std::fixed << std::setprecision(2) << res.best_node.score
-                  << " | Mean Conf: " << std::setprecision(1) << (res.best_node.mean_step_confidence * 100.0f) << "%"
-                  << " | Expanded: " << res.nodes_expanded
-                  << " | Time: " << std::setprecision(2) << res.search_runtime_ms << " ms\n";
+        std::cout << ")\n";
+        std::cout << "    Imagined   : Goal=" << (exec_res.predicted_goal_reached ? "YES" : "NO")
+                  << " | Final Pos=(" << (res.predicted_final_position/5) << "," << (res.predicted_final_position%5) << ")"
+                  << " | Conf=" << std::fixed << std::setprecision(1) << (exec_res.mean_step_confidence * 100.0f) << "%\n";
+        std::cout << "    Actual Env : Goal=" << (exec_res.actual_goal_reached ? "YES" : "NO")
+                  << " | Final Pos=(" << (exec_res.actual_trajectory.back()/5) << "," << (exec_res.actual_trajectory.back()%5) << ")"
+                  << " | Div Step=" << exec_res.first_divergence_step
+                  << " | Outcome=" << spark::failure_category_name(exec_res.failure_category) << "\n";
 
-        if (res.goal_reached) successful_plans++;
+        if (exec_res.predicted_goal_reached) pred_success++;
+        if (exec_res.actual_goal_reached) actual_success++;
     }
 
-    std::cout << "\nEvaluation Summary: " << successful_plans << "/" << std::min(num_episodes, episodes.size())
-              << " (" << (static_cast<float>(successful_plans) / std::min(num_episodes, episodes.size()) * 100.0f)
-              << "%) goals reached in model imagination." << std::endl;
+    size_t evaluated = std::min(num_episodes, episodes.size());
+    std::cout << "\nEvaluation Summary: "
+              << "Predicted: " << pred_success << "/" << evaluated << " ("
+              << (evaluated > 0 ? (100.0f * pred_success / evaluated) : 0.0f) << "%) | "
+              << "Actual: " << actual_success << "/" << evaluated << " ("
+              << (evaluated > 0 ? (100.0f * actual_success / evaluated) : 0.0f) << "%)\n";
 }
 
 int main(int argc, char* argv[]) {

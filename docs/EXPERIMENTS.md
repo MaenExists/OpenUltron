@@ -191,4 +191,48 @@ Data exported to:
 2. **Recurrence Resists Error Cascades**: In long open-loop rollouts ($H=16$), the intact recurrent state stabilizes trajectory generation, achieving **66.4% complete trajectory accuracy** compared to only 28.0% when state is reset and 22.4% when recurrent weights are zeroed (a 2.4x to 3.0x resilience margin).
 3. **Low Spatial Drift**: Even after 16 consecutive open-loop predictions without external ground truth, the mean Manhattan distance error is only **0.370 cells** (less than half a grid cell), and final-position accuracy remains at **78.0%**.
 
+### Milestone 5E: Goal-Directed Planning & Real Learned-Model Open-Loop Execution
+Data exported to:
+- `experiments/results/phase5/milestone5e2d_planning_eval.csv` (23 strategy configurations across 40 unseen test episodes and 20 validation episodes)
+
+#### 1. Real Learned-Model Planning Benchmark (Held-Out Test Layouts, $N=40$ Episodes)
+Evaluated across beam widths $K \in \{1, 2, 4, 8\}$, planning horizons $H \in \{1, 2, 4, 6\}$, and initialization conditions (Cold-Start $h(0)=\mathbf{0}$ vs Warmed-Up recurrent state $h(1)$):
+
+| Strategy | Horizon $H$ | Condition | Solvable Episodes | Solvable Actual Success | Overall Actual Success | Predicted Success | Agreement Rate | Mean Path Efficiency | Mean Search Latency |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Greedy ($K=1$)** | 1 | ColdStart | 7 | **100.0%** | 17.5% | 17.5% | 100.0% | 1.000 | 0.13 ms |
+| **Greedy ($K=1$)** | 1 | WarmedUp | 7 | **100.0%** | 17.5% | 17.5% | 100.0% | 1.000 | 0.18 ms |
+| **Beam $K=2$** | 2 | ColdStart | 12 | **100.0%** | 30.0% | 30.0% | 100.0% | 1.000 | 0.42 ms |
+| **Beam $K=2$** | 2 | WarmedUp | 12 | **100.0%** | 30.0% | 30.0% | 100.0% | 1.000 | 0.46 ms |
+| **Beam $K=2$** | 4 | ColdStart | 31 | **83.9%** | 65.0% | 72.5% | 92.5% | 1.000 | 0.99 ms |
+| **Beam $K=2$** | 4 | WarmedUp | 31 | **87.1%** | 67.5% | 67.5% | 100.0% | 1.000 | 1.39 ms |
+| **Beam $K=2$** | 6 | ColdStart | 40 | **75.0%** | 75.0% | 82.5% | 92.5% | 1.000 | 1.61 ms |
+| **Beam $K=2$** | 6 | WarmedUp | 40 | **82.5%** | 82.5% | 82.5% | 100.0% | 1.015 | 1.68 ms |
+| **Beam $K=4$** | 2 | ColdStart | 12 | **100.0%** | 30.0% | 30.0% | 100.0% | 1.000 | 0.67 ms |
+| **Beam $K=4$** | 2 | WarmedUp | 12 | **100.0%** | 30.0% | 30.0% | 100.0% | 1.000 | 0.64 ms |
+| **Beam $K=4$** | 4 | ColdStart | 31 | **83.9%** | 65.0% | 72.5% | 92.5% | 1.000 | 1.71 ms |
+| **Beam $K=4$** | 4 | WarmedUp | 31 | **87.1%** | 67.5% | 67.5% | 100.0% | 1.000 | 2.03 ms |
+| **Beam $K=4$** | 6 | ColdStart | 40 | **80.0%** | 80.0% | 90.0% | 90.0% | 1.008 | 3.12 ms |
+| **Beam $K=4$** | 6 | WarmedUp | 40 | **85.0%** | 85.0% | 87.5% | 97.5% | 1.007 | 3.65 ms |
+| **Beam $K=8$** | 2 | ColdStart | 12 | **100.0%** | 30.0% | 30.0% | 100.0% | 1.000 | 1.26 ms |
+| **Beam $K=8$** | 2 | WarmedUp | 12 | **100.0%** | 30.0% | 30.0% | 100.0% | 1.000 | 1.05 ms |
+| **Beam $K=8$** | 4 | ColdStart | 31 | **83.9%** | 65.0% | 72.5% | 92.5% | 1.000 | 4.39 ms |
+| **Beam $K=8$** | 4 | WarmedUp | 31 | **90.3%** | 70.0% | 70.0% | 100.0% | 1.000 | 4.27 ms |
+| **Beam $K=8$** | 6 | ColdStart | 40 | **80.0%** | 80.0% | 90.0% | 90.0% | 1.008 | 5.84 ms |
+| **Beam $K=8$** | 6 | WarmedUp | 40 | **87.5%** | 87.5% | 87.5% | **97.5%** | **1.007** | 5.92 ms |
+| **Ground-Truth Oracle (BFS)** | 6 | N/A | 40 | **100.0%** | 100.0% | 100.0% | 100.0% | 1.000 | 0.01 ms |
+
+#### 2. Failure Mode Breakdown at Horizon $H=6$ ($K=8$, WarmedUp, 40 Test Episodes)
+- **Success (Actual Goal Reached)**: 35 / 40 episodes (**87.5%**)
+- **Pruned Valid Routes**: 4 / 40 episodes (**10.0%**) — Search budget limitation (beam width $K=8$ pruned the optimal route branch in complex detour geometry).
+- **Compounding Drift / Obstacle Hallucination**: 1 / 40 episodes (**2.5%**) — Autoregressive error accumulation at step 5 in open loop.
+- **False Goal Predictions**: 0 / 40 episodes (**0.0%**) — Zero false arrivals claimed.
+
+#### Scientific Findings:
+1. **Model-Based Planning Success Without Simulator Consultation**: SPARK's learned recurrent world model successfully guides beam search to achieve goals in unseen environments with **up to 100% solvable success at $H=2$, 90.3% at $H=4$, and 87.5% at $H=6$**, with zero simulator interaction during planning.
+2. **Near-Optimal Path Trajectories**: Solved plans exhibit a path efficiency ratio of $\mathbf{1.007}$, demonstrating that the learned transitions and objective function $J(n)$ favor optimal, direct paths rather than wandering trajectories.
+3. **Warm-State Stabilization**: Recurrent warm-up from initial environment observation improves solvable goal attainment from 80.0% to 87.5% and prediction-execution agreement to 97.5%, suppressing false goal hallucinations.
+4. **Dominance of Search Pruning Over Model Error**: At $H=6$, 80% of failures (4 of 5) were caused by beam search pruning rather than world-model prediction failure, confirming the reliability of SPARK's transition dynamics.
+
+
 

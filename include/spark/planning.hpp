@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <cmath>
+#include <map>
 
 namespace spark {
 
@@ -138,6 +139,7 @@ struct PlanningNode {
     uint32_t predicted_position = 0;
     std::vector<float> recurrent_state; // Snapshot of h(t) (N=128 floats)
     std::vector<Action> actions_from_root;
+    std::vector<uint32_t> predicted_trajectory; // [s_0, s_1, ..., s_L]
     int32_t parent_idx = -1;
     Action action_from_parent = Action::Stay;
     float score = 0.0f;
@@ -166,6 +168,7 @@ struct BeamSearchConfig {
 struct PlanningSearchResult {
     PlanningNode best_node;
     std::vector<Action> best_plan;
+    std::vector<uint32_t> predicted_trajectory;
     bool goal_reached = false;
     uint32_t predicted_final_position = 0;
     size_t nodes_expanded = 0;
@@ -175,6 +178,94 @@ struct PlanningSearchResult {
     uint32_t depth_reached = 0;
     uint32_t beam_width = 0;
     uint32_t max_depth = 0;
+};
+
+// ============================================================================
+// 5B. Real Environment Execution & Scientific Evaluation Diagnostics
+// ============================================================================
+enum class FailureCategory {
+    None,                     // Plan succeeded in real environment
+    ObstacleHallucination,    // Model predicted passing through an obstacle cell
+    IncorrectPosition,        // Model predicted position different from actual outcome
+    DepthInsufficient,        // Goal requires more steps than planning horizon
+    PrunedValidRoute,         // Valid route existed within depth but was pruned by beam
+    FalseGoalPrediction       // Model predicted goal reached, but actual environment did not reach goal
+};
+
+inline const char* failure_category_name(FailureCategory cat) {
+    switch (cat) {
+        case FailureCategory::None: return "None (Success)";
+        case FailureCategory::ObstacleHallucination: return "ObstacleHallucination";
+        case FailureCategory::IncorrectPosition: return "IncorrectPosition";
+        case FailureCategory::DepthInsufficient: return "DepthInsufficient";
+        case FailureCategory::PrunedValidRoute: return "PrunedValidRoute";
+        case FailureCategory::FalseGoalPrediction: return "FalseGoalPrediction";
+        default: return "Unknown";
+    }
+}
+
+enum class EpisodeGroup {
+    GroupA_Direct,            // Shortest path == Manhattan distance
+    GroupB_Detour,            // Shortest path > Manhattan distance
+    GroupC_Misleading,        // First step increases Manhattan distance
+    GroupD_Longer             // Shortest path > Search Horizon
+};
+
+inline const char* episode_group_name(EpisodeGroup group) {
+    switch (group) {
+        case EpisodeGroup::GroupA_Direct: return "Group A (Direct)";
+        case EpisodeGroup::GroupB_Detour: return "Group B (Detour)";
+        case EpisodeGroup::GroupC_Misleading: return "Group C (Misleading)";
+        case EpisodeGroup::GroupD_Longer: return "Group D (Longer)";
+        default: return "Unknown";
+    }
+}
+
+struct PlanExecutionResult {
+    PlanningEpisode episode;
+    EpisodeGroup group = EpisodeGroup::GroupA_Direct;
+    std::vector<Action> executed_plan;
+    std::vector<uint32_t> predicted_trajectory;
+    std::vector<uint32_t> actual_trajectory;
+    bool predicted_goal_reached = false;
+    bool actual_goal_reached = false;
+    bool predicted_actual_agreement = false;
+    int32_t first_divergence_step = -1; // -1 if no divergence
+    float path_efficiency = 0.0f;       // L_executed / L_oracle if actual_goal_reached, else 0.0f
+    FailureCategory failure_category = FailureCategory::None;
+    size_t nodes_expanded = 0;
+    size_t model_evaluations = 0;
+    double search_runtime_ms = 0.0;
+    float mean_step_confidence = 1.0f;
+    float final_score = 0.0f;
+    bool cold_start = true;
+};
+
+struct PlanningEvaluationSummary {
+    size_t total_episodes = 0;
+    size_t predicted_goals_reached = 0;
+    size_t actual_goals_reached = 0;
+    size_t predicted_and_actual_success = 0;
+    size_t solvable_episodes = 0;       // Episodes where L_oracle <= H
+    size_t solvable_actual_success = 0; // Actual success on solvable episodes
+    size_t unsolvable_episodes = 0;     // Episodes where L_oracle > H
+    size_t unsolvable_actual_success = 0;
+
+    double mean_path_efficiency = 0.0; // Over successful episodes
+    size_t efficiency_count = 0;
+
+    double mean_divergence_step = 0.0;
+    size_t divergence_count = 0;
+
+    size_t total_nodes_expanded = 0;
+    size_t total_model_evaluations = 0;
+    double total_runtime_ms = 0.0;
+
+    std::map<FailureCategory, size_t> failure_counts;
+    std::map<EpisodeGroup, size_t> group_totals;
+    std::map<EpisodeGroup, size_t> group_actual_success;
+
+    void print_summary(const std::string& title = "Planning Evaluation Summary") const;
 };
 
 // ============================================================================
@@ -302,6 +393,45 @@ public:
         uint32_t goal_pos,
         uint32_t depth = 3,
         const PlanningScoreConfig& score_cfg = PlanningScoreConfig()
+    );
+
+    // Classify episode into Group A, B, C, D
+    static EpisodeGroup classify_episode(const PlanningEpisode& episode, uint32_t max_depth);
+
+    // Open-loop plan execution in real simulator environment
+    static PlanExecutionResult execute_plan_open_loop(
+        const PlanningEpisode& episode,
+        const PlanningSearchResult& search_res,
+        bool cold_start = true
+    );
+};
+
+// ============================================================================
+// 7. Scientific Planning Evaluator & Benchmark Suite
+// ============================================================================
+class PlanningEvaluator {
+public:
+    // Evaluate a specific search strategy across an episode dataset
+    static PlanningEvaluationSummary evaluate_strategy(
+        const MicroUnitNetwork& net,
+        const std::vector<PlanningEpisode>& episodes,
+        uint32_t beam_width, // 1 for greedy (depth 1), K for beam search
+        uint32_t max_depth,
+        bool cold_start = true,
+        const PlanningScoreConfig& score_cfg = PlanningScoreConfig()
+    );
+
+    // Evaluate ground-truth BFS oracle on the dataset
+    static PlanningEvaluationSummary evaluate_oracle(
+        const std::vector<PlanningEpisode>& episodes,
+        uint32_t max_depth
+    );
+
+    // Complete benchmark suite comparing Greedy, Beam (K=2,4,8), and Oracle
+    // across horizons H=2, 4, 6 and Cold-start vs Warm-state
+    static void run_milestone5e2d_benchmark(
+        const std::string& checkpoint_path,
+        const std::string& csv_path = "experiments/results/phase5/milestone5e2d_planning_eval.csv"
     );
 };
 
