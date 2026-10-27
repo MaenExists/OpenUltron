@@ -101,7 +101,14 @@
       - 5E.2D.3 & 5E.2D.4: Evaluated 20 validation smoke episodes and 40 held-out test episodes across Greedy ($K=1, H=1$), Beam ($K \in \{2, 4, 8\}, H \in \{2, 4, 6\}$), and BFS Oracle. Solvable success rate reached **100.0%** at $H=2$, **90.3%** at $H=4$, and **87.5%** at $H=6$ ($K=8$, WarmedUp) with optimal path efficiency ($1.000$ to $1.007$).
       - Identified model exploitation and failure attribution (10% search pruning, 2.5% compounding drift, 0% model hallucination under warm state).
       - Exported dataset to `experiments/results/phase5/milestone5e2d_planning_eval.csv` and documented findings in `docs/MILESTONE5E2D_FINDINGS.md`.
-    - Sub-milestone 5E.3 (Closed-Loop Model Predictive Control & Replanning): Next.
+    - Sub-milestone 5E.3 (Closed-Loop Model Predictive Control & Replanning): In progress.
+- **Phase 6: SPARK Emergence Research Track** (In Progress)
+  - **Milestone 6A — Network Scaling, Distributed Memory & Local Online Learning Feasibility** (Completed: 2026-10-27)
+    - Sub-milestone 6A.0 (Audit & Reference Preservation): Verified all existing checkpoints, CTest suites, and fresh 240-episode confirmatory evaluation dataset are intact and untouched. Added defensive safe allocation bounds (`MAX_UNITS = 65536`) in `SparseGraphConfig` and `NetworkConfig`.
+    - Sub-milestone 6A.1 (Configurable Network Size Scaling): Implemented and verified network scaling across $N \in \{128, 256, 512, 1024, 2048\}$ with fixed fan-in $K=8$. Verified CSR graph bounds, homogeneous MicroUnit invariants, linear memory footprint scaling (51 KB to 808 KB), CPU throughput (33,532 down to 2,373 steps/s), and binary checkpoint serialization round-tripping. Added test suite `tests/test_scaling.cpp` (all 11 CTests passing 100% in 0.52s).
+    - Local Learning Audit & Feasibility: Identified structural blocker in existing Phase 4 `LocalLearner` (Sigmoid/BCE produces +11.5 net error sum on 25-class categorical tasks, collapsing accuracy to 10.2%). Prototyped minimal categorical local-learning extension (Softmax + CCE balanced error, $e_k = p_k - y_k$). Verified positive monotonic scaling under 10k steps of online experience: $N=128 \to 19.4\%$, $N=256 \to 28.6\%$, $N=512 \to 34.2\%$.
+    - Created `docs/SPARK_EMERGENCE_ROADMAP.md` and `docs/MILESTONE6A_SCALING_FINDINGS.md`.
+    - Exported empirical CSV registries to `experiments/results/emergence/milestone6a_network_scaling.csv` and `milestone6a_local_learning_feasibility.csv`.
 
 ## Pending Phases
 - Phase 6: Iterative Internal Computation

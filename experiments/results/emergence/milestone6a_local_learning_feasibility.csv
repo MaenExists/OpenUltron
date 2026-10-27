@@ -1,0 +1,5 @@
+num_units,fan_in,mode,readout_mode,loss_function,training_steps,eval_steps,eval_accuracy,eval_loss,train_step_latency_us
+128,8,existing_local_learner,Sigmoid,BCE,5000,500,0.1020,3.4481,68.04
+128,8,categorical_local_extension,Softmax,CategoricalCrossEntropy,10000,500,0.1940,2.3338,57.40
+256,8,categorical_local_extension,Softmax,CategoricalCrossEntropy,10000,500,0.2860,2.1810,108.71
+512,8,categorical_local_extension,Softmax,CategoricalCrossEntropy,10000,500,0.3420,2.1020,360.68

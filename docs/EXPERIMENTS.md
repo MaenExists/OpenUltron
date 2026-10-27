@@ -234,5 +234,39 @@ Evaluated across beam widths $K \in \{1, 2, 4, 8\}$, planning horizons $H \in \{
 3. **Warm-State Stabilization**: Recurrent warm-up from initial environment observation improves solvable goal attainment from 80.0% to 87.5% and prediction-execution agreement to 97.5%, suppressing false goal hallucinations.
 4. **Dominance of Search Pruning Over Model Error**: At $H=6$, 80% of failures (4 of 5) were caused by beam search pruning rather than world-model prediction failure, confirming the reliability of SPARK's transition dynamics.
 
+## Phase 6 Experiments (Emergence Research Track: Scaling & Local Adaptation)
+
+### Milestone 6A: Network Size Scaling & Resource Profiling
+Data exported to `experiments/results/emergence/milestone6a_network_scaling.csv`:
+
+```csv
+num_units,fan_in,input_dim,output_dim,total_parameters,parameter_bytes,model_memory_bytes,forward_latency_us,forward_throughput_steps_per_sec
+128,8,55,25,11417,45668,52240,29.822,33532.0
+256,8,55,25,22809,91236,103952,56.522,17692.2
+512,8,55,25,45593,182372,207376,103.199,9690.0
+1024,8,55,25,91161,364644,414224,194.652,5137.4
+2048,8,55,25,182297,729188,827920,421.425,2372.9
+```
+
+- **Hardware**: Linux x86_64, GCC 16.2.1 (-O3 -march=native)
+- **Mathematical Invariant**: Linear parameter growth $P(N) = 89N + 25$; contiguous FP32 CSR memory scaling from 52 KB to 828 KB.
+- **Latency / Throughput**: Scaled smoothly from 29.8 $\mu$s (33.5k steps/s) at $N=128$ to 421.4 $\mu$s (2.37k steps/s) at $N=2048$, confirming all sizes are practical on CPU.
+
+### Milestone 6A: Local Learning Mechanism Feasibility
+Data exported to `experiments/results/emergence/milestone6a_local_learning_feasibility.csv`:
+
+```csv
+num_units,fan_in,mode,readout_mode,loss_function,training_steps,eval_steps,eval_accuracy,eval_loss,train_step_latency_us
+128,8,existing_local_learner,Sigmoid,BCE,5000,500,0.1020,3.4481,68.04
+128,8,categorical_local_extension,Softmax,CategoricalCrossEntropy,10000,500,0.1940,2.3338,57.40
+256,8,categorical_local_extension,Softmax,CategoricalCrossEntropy,10000,500,0.2860,2.1810,108.71
+512,8,categorical_local_extension,Softmax,CategoricalCrossEntropy,10000,500,0.3420,2.1020,360.68
+```
+
+- **Audit Result**: Existing Phase 4 `LocalLearner` (Sigmoid/BCE) fails on 25-class categorical tasks ($10.2\%$ accuracy) due to unbalanced positive sigmoid probability sums (+11.5 error sum) causing net-negative feedback drift.
+- **Categorical Extension**: Prototyped Softmax readout + balanced Categorical Cross-Entropy error ($e_k = p_k - y_k$, $\sum e_k = 0$) using local CSR-aligned eligibility traces and Readout Transpose feedback.
+- **Scaling Validation**: Under equal environmental experience (10,000 online steps), Top-1 accuracy rises monotonically: **$19.4\%$** ($N=128$) $\to$ **$28.6\%$** ($N=256$) $\to$ **$34.2\%$** ($N=512$), with validation loss declining from $2.334$ to $2.102$.
+
+
 
 

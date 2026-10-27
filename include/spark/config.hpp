@@ -22,6 +22,7 @@ inline const char* topology_name(TopologyType type) {
 }
 
 struct SparseGraphConfig {
+    static constexpr uint32_t MAX_UNITS = 65536;
     uint32_t num_units = 128;
     uint32_t fan_in = 8;
     TopologyType topology = TopologyType::RandomSparse;
@@ -34,6 +35,10 @@ struct SparseGraphConfig {
     bool validate(std::string& err_msg) const {
         if (num_units == 0) {
             err_msg = "num_units must be > 0";
+            return false;
+        }
+        if (num_units > MAX_UNITS) {
+            err_msg = "num_units exceeds maximum allowed capacity (65536)";
             return false;
         }
         if (fan_in == 0) {
@@ -67,6 +72,7 @@ struct SparseGraphConfig {
 };
 
 struct NetworkConfig {
+    static constexpr uint32_t MAX_UNITS = 65536;
     uint32_t num_units = 128;
     uint32_t input_dim = 4;
     uint32_t output_dim = 1;
@@ -78,6 +84,10 @@ struct NetworkConfig {
     bool validate(std::string& err_msg) const {
         if (num_units == 0) {
             err_msg = "num_units must be > 0";
+            return false;
+        }
+        if (num_units > MAX_UNITS) {
+            err_msg = "num_units exceeds maximum allowed capacity (65536)";
             return false;
         }
         if (input_dim == 0) {

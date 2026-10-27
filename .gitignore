@@ -24,4 +24,5 @@ target/
 .vscode/
 *.swp
 *.log
+scratch/
 

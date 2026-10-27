@@ -92,3 +92,7 @@ add_test(NAME test_rollout COMMAND test_rollout)
 add_executable(test_planning tests/test_planning.cpp)
 target_link_libraries(test_planning PRIVATE spark_core)
 add_test(NAME test_planning COMMAND test_planning)
+
+add_executable(test_scaling tests/test_scaling.cpp)
+target_link_libraries(test_scaling PRIVATE spark_core)
+add_test(NAME test_scaling COMMAND test_scaling)
