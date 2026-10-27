@@ -85,6 +85,7 @@ struct LocalLearningConfig {
     float lr = 0.03f;
     float lambda = 0.8f;                     // Eligibility trace decay
     FeedbackMode feedback_mode = FeedbackMode::RandomFeedback;
+    LossType loss_type = LossType::BinaryCrossEntropy;
     float feedback_scale = 1.0f;
     float max_update_norm = 1.0f;
     float weight_decay = 0.0f;

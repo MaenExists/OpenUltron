@@ -133,7 +133,10 @@ float LocalLearner::step(const std::vector<float>& x, const Target& target) {
     std::vector<float> h_prev = net_.state();
 
     // 2. Forward recurrent step
-    net_.forward_step(x, logits_, probs_, ReadoutMode::Sigmoid);
+    ReadoutMode mode = (config_.loss_type == LossType::CategoricalCrossEntropy)
+        ? ReadoutMode::Softmax
+        : ReadoutMode::Sigmoid;
+    net_.forward_step(x, logits_, probs_, mode);
 
     // 3. Update local eligibility traces
     traces_.update(net_, x, h_prev, config_.lambda);
@@ -142,13 +145,22 @@ float LocalLearner::step(const std::vector<float>& x, const Target& target) {
         return 0.0f; // Warmup tick: no error signal, traces still accumulate activity
     }
 
-    // 4. Compute output error e_k = p_k - y_k and BCE loss
+    // 4. Compute output error e_k = p_k - y_k and loss
     float loss = 0.0f;
-    for (uint32_t k = 0; k < Dout; ++k) {
-        output_errors_[k] = probs_[k] - target.values[k];
-        loss += TBPTTTrainer::bce_loss(logits_[k], target.values[k]);
+    if (config_.loss_type == LossType::CategoricalCrossEntropy) {
+        for (uint32_t k = 0; k < Dout; ++k) {
+            output_errors_[k] = probs_[k] - target.values[k];
+            if (target.values[k] > 0.5f) {
+                loss -= std::log(std::max(probs_[k], 1e-7f));
+            }
+        }
+    } else {
+        for (uint32_t k = 0; k < Dout; ++k) {
+            output_errors_[k] = probs_[k] - target.values[k];
+            loss += TBPTTTrainer::bce_loss(logits_[k], target.values[k]);
+        }
+        loss /= static_cast<float>(Dout);
     }
-    loss /= static_cast<float>(Dout);
 
     // 5. Compute feedback signal g_i
     feedback_.compute_feedback(net_, output_errors_, config_.feedback_mode, g_feedback_);
@@ -240,6 +252,7 @@ TrainSummary LocalLearner::train(
     }
 
     Trainer eval_runner(net_, train_env, eval_env);
+    eval_runner.set_loss_type(config_.loss_type);
 
     for (uint32_t s = 1; s <= total_steps; ++s) {
         if (train_env.is_done()) {

@@ -472,6 +472,11 @@ WorldModelMetrics evaluate_world_model(
         bool correct = (pred == truth);
         if (correct) metrics.correct_transitions++;
 
+        if (trans.action == Action::Stay) {
+            metrics.stay_actions_total++;
+            if (correct) metrics.stay_actions_correct++;
+        }
+
         if (trans.moved) {
             metrics.successful_moves_total++;
             if (correct) metrics.successful_moves_correct++;
@@ -534,6 +539,10 @@ BaselineSuiteResults evaluate_all_baselines(
         results.random_predictor.total_loss += 3.2188758; // -log(1/25)
         bool rand_correct = (rand_pred == truth);
         if (rand_correct) results.random_predictor.correct_transitions++;
+        if (trans.action == Action::Stay) {
+            results.random_predictor.stay_actions_total++;
+            if (rand_correct) results.random_predictor.stay_actions_correct++;
+        }
         if (trans.moved) {
             results.random_predictor.successful_moves_total++;
             if (rand_correct) results.random_predictor.successful_moves_correct++;
@@ -555,6 +564,10 @@ BaselineSuiteResults evaluate_all_baselines(
         bool copy_correct = (copy_pred == truth);
         results.copy_current_predictor.total_loss += (copy_correct ? 0.0 : 15.0);
         if (copy_correct) results.copy_current_predictor.correct_transitions++;
+        if (trans.action == Action::Stay) {
+            results.copy_current_predictor.stay_actions_total++;
+            if (copy_correct) results.copy_current_predictor.stay_actions_correct++;
+        }
         if (trans.moved) {
             results.copy_current_predictor.successful_moves_total++;
             if (copy_correct) results.copy_current_predictor.successful_moves_correct++;
@@ -577,6 +590,10 @@ BaselineSuiteResults evaluate_all_baselines(
         bool naive_correct = (naive_pred == truth);
         results.naive_movement_predictor.total_loss += (naive_correct ? 0.0 : 15.0);
         if (naive_correct) results.naive_movement_predictor.correct_transitions++;
+        if (trans.action == Action::Stay) {
+            results.naive_movement_predictor.stay_actions_total++;
+            if (naive_correct) results.naive_movement_predictor.stay_actions_correct++;
+        }
         if (trans.moved) {
             results.naive_movement_predictor.successful_moves_total++;
             if (naive_correct) results.naive_movement_predictor.successful_moves_correct++;
@@ -596,6 +613,10 @@ BaselineSuiteResults evaluate_all_baselines(
         // 4. Ground truth oracle
         results.ground_truth_oracle.total_loss += 0.0;
         results.ground_truth_oracle.correct_transitions++;
+        if (trans.action == Action::Stay) {
+            results.ground_truth_oracle.stay_actions_total++;
+            results.ground_truth_oracle.stay_actions_correct++;
+        }
         if (trans.moved) {
             results.ground_truth_oracle.successful_moves_total++;
             results.ground_truth_oracle.successful_moves_correct++;

@@ -90,6 +90,9 @@ struct WorldModelMetrics {
     size_t obstacle_blocks_total = 0;
     size_t obstacle_blocks_correct = 0;
 
+    size_t stay_actions_total = 0;
+    size_t stay_actions_correct = 0;
+
     double inference_seconds = 0.0;
 
     float overall_accuracy() const {
@@ -109,6 +112,9 @@ struct WorldModelMetrics {
     }
     float obstacle_block_accuracy() const {
         return (obstacle_blocks_total > 0) ? static_cast<float>(obstacle_blocks_correct) / obstacle_blocks_total : 0.0f;
+    }
+    float stay_action_accuracy() const {
+        return (stay_actions_total > 0) ? static_cast<float>(stay_actions_correct) / stay_actions_total : 0.0f;
     }
 
     void print_summary() const;

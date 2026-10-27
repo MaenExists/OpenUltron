@@ -1,0 +1,8 @@
+model_name,total_steps,overall_accuracy,free_moves_total,free_move_acc,obstacle_blocks_total,obstacle_block_acc,boundary_blocks_total,boundary_block_acc,stay_actions_total,stay_action_acc,mean_ce_loss
+"1. Uniform Random",1000,0.0400,491,0.0428,164,0.0427,144,0.0417,201,0.0299,3.2189
+"2. Stay in Current (Copy)",1000,0.5090,491,0.0000,164,1.0000,144,1.0000,201,1.0000,3.4041
+"3. Naive Move (Ignore Obs)",1000,0.8360,491,1.0000,164,0.0000,144,1.0000,201,1.0000,1.1532
+"4. Untrained SPARK (N=128)",1000,0.0370,491,0.0407,164,0.0305,144,0.0347,201,0.0348,3.5034
+"5. SPARK Frozen Rec (Readout)",1000,0.0870,491,0.0550,164,0.1159,144,0.1944,201,0.0647,2.9810
+"6. SPARK Local Learning (N=128)",1000,0.3110,491,0.1894,164,0.3659,144,0.5208,201,0.4129,2.1333
+"7. SPARK TBPTT (Exact Control)",1000,0.6980,491,0.7026,164,0.3537,144,0.9236,201,0.8060,0.9178

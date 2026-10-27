@@ -228,6 +228,66 @@ void test_scaling_stability_512() {
     std::cout << "[Test] test_scaling_stability_512 PASSED." << std::endl;
 }
 
+void test_categorical_local_learning() {
+    std::cout << "[Test] Running test_categorical_local_learning..." << std::endl;
+
+    const uint32_t N = 32;
+    const uint32_t Din = 8;
+    const uint32_t Dout = 4;
+
+    spark::NetworkConfig n_cfg;
+    n_cfg.num_units = N;
+    n_cfg.input_dim = Din;
+    n_cfg.output_dim = Dout;
+    n_cfg.seed = 42ULL;
+
+    spark::SparseGraphConfig g_cfg;
+    g_cfg.num_units = N;
+    g_cfg.fan_in = 4;
+    g_cfg.seed = 42ULL;
+
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+
+    spark::LocalLearningConfig config;
+    config.lr = 0.05f;
+    config.lambda = 0.5f;
+    config.feedback_mode = spark::FeedbackMode::ReadoutTranspose;
+    config.loss_type = spark::LossType::CategoricalCrossEntropy;
+
+    spark::LocalLearner learner(net, config);
+
+    // Verify online categorical learning on reproducible synthetic data
+    spark::Random rng(123ULL);
+    float initial_loss = 0.0f;
+    float final_loss = 0.0f;
+
+    for (int t = 0; t < 200; ++t) {
+        std::vector<float> x(Din, 0.0f);
+        uint32_t active_in = rng.uniform_uint32(0, Din - 1);
+        x[active_in] = 1.0f;
+
+        uint32_t target_class = active_in % Dout;
+        spark::Target target;
+        target.values.assign(Dout, 0.0f);
+        target.values[target_class] = 1.0f;
+        target.valid = true;
+
+        float loss = learner.step(x, target);
+        REQUIRE(std::isfinite(loss), "Categorical local learning loss must be finite");
+        if (t == 0) initial_loss = loss;
+        if (t == 199) final_loss = loss;
+    }
+
+    std::cout << "  Categorical Loss: " << initial_loss << " -> " << final_loss << std::endl;
+    REQUIRE(final_loss < initial_loss, "Categorical local learning failed to decrease loss");
+
+    for (float w : net.graph().weights) REQUIRE(std::isfinite(w), "Non-finite recurrent weight");
+    for (float u : net.input_weights()) REQUIRE(std::isfinite(u), "Non-finite input weight");
+    for (float v : net.output_weights()) REQUIRE(std::isfinite(v), "Non-finite output weight");
+
+    std::cout << "[Test] test_categorical_local_learning PASSED." << std::endl;
+}
+
 int main() {
     std::cout << "=== Running Local Learning Tests ===" << std::endl;
     test_trace_decay_and_accumulation();
@@ -235,6 +295,7 @@ int main() {
     test_local_learning_delay1();
     test_trace_finiteness_and_bounds();
     test_scaling_stability_512();
+    test_categorical_local_learning();
     std::cout << "All Local Learning tests passed successfully!" << std::endl;
     return 0;
 }

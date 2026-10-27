@@ -109,6 +109,17 @@
     - Local Learning Audit & Feasibility: Identified structural blocker in existing Phase 4 `LocalLearner` (Sigmoid/BCE produces +11.5 net error sum on 25-class categorical tasks, collapsing accuracy to 10.2%). Prototyped minimal categorical local-learning extension (Softmax + CCE balanced error, $e_k = p_k - y_k$). Verified positive monotonic scaling under 10k steps of online experience: $N=128 \to 19.4\%$, $N=256 \to 28.6\%$, $N=512 \to 34.2\%$.
     - Created `docs/SPARK_EMERGENCE_ROADMAP.md` and `docs/MILESTONE6A_SCALING_FINDINGS.md`.
     - Exported empirical CSV registries to `experiments/results/emergence/milestone6a_network_scaling.csv` and `milestone6a_local_learning_feasibility.csv`.
+  - **Milestone 6A.2 — Local Learning Reliability & Scaling Validation** (In Progress)
+    - Sub-milestone 6A.2A (Correctness & Baseline Audit): Audited categorical local learner mechanics, integrated `LossType::CategoricalCrossEntropy` natively into `LocalLearner` and `LocalLearningConfig`, and added `test_categorical_local_learning` to `tests/test_local_learning.cpp` (11/11 CTests passing). Ran 7-way comparative evaluation across 1,000 identical validation steps:
+      - Uniform Random: 4.0% (Loss: 3.219)
+      - Stay in Current (Copy): 50.9% overall (0.0% on free moves, 100.0% on stationary transitions; Loss: 3.404)
+      - Naive Move (Ignore Obs): 83.6% overall (100.0% on free moves, 0.0% on obstacle blocks; Loss: 1.153)
+      - Untrained SPARK (N=128): 3.7% (Loss: 3.503)
+      - SPARK Frozen Recurrent (Readout Only): 8.7% (Loss: 2.981)
+      - SPARK Local Learning (N=128, 10k steps): **31.1%** overall (18.9% free moves, 36.6% obstacle blocks, 52.1% boundary blocks, 41.3% stay; Loss: 2.133)
+      - SPARK Exact TBPTT Control: 69.8% overall (70.3% free moves, 35.4% obstacle blocks; Loss: 0.918)
+      - Identified key trade-off: Local Learning matches TBPTT on obstacle collisions (36.6% vs 35.4%) and is the only non-oracle method with non-zero accuracy across all 4 transition types, but trails simple stationary/geometry rules (50.9% Copy Current, 83.6% Naive Move) on aggregate accuracy.
+      - Exported dataset to `experiments/results/emergence/milestone6a2_baseline_audit.csv`.
 
 ## Pending Phases
 - Phase 6: Iterative Internal Computation
