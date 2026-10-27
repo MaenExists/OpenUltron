@@ -2,6 +2,7 @@
 #include "spark/gridworld.hpp"
 #include "spark/network.hpp"
 #include <iostream>
+#include <fstream>
 #include <cstdlib>
 #include <cmath>
 #include <cassert>
@@ -32,6 +33,20 @@ static spark::MicroUnitNetwork create_test_network(uint64_t seed = 42ULL) {
     n_cfg.seed = seed;
 
     return spark::MicroUnitNetwork(n_cfg, g_cfg);
+}
+
+// Helper to locate trained checkpoint across build and root directories
+static std::string find_checkpoint_path() {
+    const std::vector<std::string> candidates = {
+        "checkpoints/world_model_best.spark",
+        "../checkpoints/world_model_best.spark",
+        "../../checkpoints/world_model_best.spark"
+    };
+    for (const auto& path : candidates) {
+        std::ifstream f(path);
+        if (f.good()) return path;
+    }
+    return "";
 }
 
 // 1. Test BFS Shortest Path Reference Oracle (Empty Grid & Obstacle Detour)
@@ -969,8 +984,343 @@ void test_exhaustive_vs_beam_search_agreement() {
     std::cout << "[Test] test_exhaustive_vs_beam_search_agreement PASSED." << std::endl;
 }
 
+// 22. Milestone 5E.2C: Unfinished routes cannot falsely claim goal achievement
+void test_unfinished_routes_cannot_claim_goal() {
+    std::cout << "[Test] Running test_unfinished_routes_cannot_claim_goal..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto mock_pred = create_mock_grid_predictor(0.95f);
+    // Start at (0,0)=0, Goal at (4,4)=24. Shortest path is 8 steps.
+    // Planning horizon is strictly H=2.
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 24, 128);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 2;
+
+    auto result = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 24, cfg);
+
+    REQUIRE(!result.goal_reached, "Search must report goal_reached == false when horizon is insufficient");
+    REQUIRE(result.completed_goal_candidates.empty(), "Completed goal list must remain strictly empty");
+    REQUIRE(!result.best_node.goal_reached, "Selected best node must have goal_reached == false");
+    REQUIRE(result.best_node.predicted_position != 24, "Predicted final position cannot match goal");
+
+    // Exact score check: J = -lambda_d * D - lambda_s * L (NO goal_reward or early_bonus)
+    float expected_score = -cfg.score_cfg.lambda_dist * static_cast<float>(result.best_node.manhattan_to_goal)
+                           - cfg.score_cfg.lambda_step * static_cast<float>(result.best_node.depth);
+    REQUIRE(std::abs(result.best_node.score - expected_score) < 1e-4f,
+            "Score must match incomplete penalty formula without any goal reward or early arrival bonus");
+    REQUIRE(result.best_node.score < 0.0f, "Unfinished score must be negative");
+
+    std::cout << "[Test] test_unfinished_routes_cannot_claim_goal PASSED." << std::endl;
+}
+
+// 23. Milestone 5E.2C: Unexpected model predictions remain observable without silent correction
+void test_unexpected_predictions_remain_observable() {
+    std::cout << "[Test] Running test_unexpected_predictions_remain_observable..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+    layout.obstacles[7] = 1; // Mark cell 7 as obstacle
+
+    // Predictor that forces an unexpected prediction into the obstacle cell 7
+    spark::PredictorFn anomalous_pred = [](
+        const std::vector<float>& h_in,
+        const std::vector<float>&,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        h_out = h_in;
+        logits.assign(25, 0.0f);
+        probs.assign(25, 0.01f);
+        probs[7] = 0.76f; // Strongly predicts landing on cell 7 (obstacle)
+    };
+
+    auto root = spark::PlanningEngine::create_cold_start_root(2, 12, 128);
+    auto child = spark::PlanningEngine::expand_branch_custom(anomalous_pred, layout, root, spark::Action::Down, 12);
+
+    // The planner must faithfully record position 7 without silently clamping or snapping back
+    REQUIRE(child.predicted_position == 7, "Model prediction into obstacle cell must be preserved observably");
+    REQUIRE(std::abs(child.target_probability - 0.76f) < 1e-4f, "Target probability must match model output");
+
+    std::cout << "[Test] test_unexpected_predictions_remain_observable PASSED." << std::endl;
+}
+
+// 24. Milestone 5E.2C: Non-finite score rejection and various valid score configurations
+void test_comparator_non_finite_and_score_configs() {
+    std::cout << "[Test] Running test_comparator_non_finite_and_score_configs..." << std::endl;
+
+    // 1. Config A: Pure distance heuristic
+    spark::PlanningScoreConfig cfg_dist;
+    cfg_dist.goal_reward = 100.0f;
+    cfg_dist.lambda_dist = 5.0f;
+    cfg_dist.lambda_step = 0.0f;
+    cfg_dist.early_goal_bonus_per_step = 0.0f;
+
+    std::string err;
+    REQUIRE(cfg_dist.validate(err), "Config A must be valid");
+    // D=3, L=2, unfinished => J = -5(3) = -15.0
+    float score_a = spark::PlanningScorer::compute_score(3, 0, 2, 6, false, cfg_dist);
+    REQUIRE(std::abs(score_a - (-15.0f)) < 1e-5f, "Config A score must match -15.0");
+
+    // 2. Config B: Pure step penalty
+    spark::PlanningScoreConfig cfg_step;
+    cfg_step.goal_reward = 100.0f;
+    cfg_step.lambda_dist = 0.0f;
+    cfg_step.lambda_step = 3.0f;
+    cfg_step.early_goal_bonus_per_step = 0.0f;
+    REQUIRE(cfg_step.validate(err), "Config B must be valid");
+    // D=3, L=2, unfinished => J = -3(2) = -6.0
+    float score_b = spark::PlanningScorer::compute_score(3, 0, 2, 6, false, cfg_step);
+    REQUIRE(std::abs(score_b - (-6.0f)) < 1e-5f, "Config B score must match -6.0");
+
+    // 3. Config C: High early bonus
+    spark::PlanningScoreConfig cfg_early;
+    cfg_early.goal_reward = 50.0f;
+    cfg_early.lambda_dist = 1.0f;
+    cfg_early.lambda_step = 0.5f;
+    cfg_early.early_goal_bonus_per_step = 10.0f;
+    REQUIRE(cfg_early.validate(err), "Config C must be valid");
+    // D=0, L=2, H_max=6, goal reached => J = 50 - 0.5(2) + 10(4) = 50 - 1 + 40 = 89.0
+    float score_c = spark::PlanningScorer::compute_score(0, 0, 2, 6, true, cfg_early);
+    REQUIRE(std::abs(score_c - 89.0f) < 1e-5f, "Config C score must match 89.0");
+
+    // 4. Non-finite parameter rejection in compute_score
+    spark::PlanningScoreConfig invalid_cfg = cfg_dist;
+    invalid_cfg.goal_reward = std::numeric_limits<float>::infinity();
+    bool caught = false;
+    try {
+        spark::PlanningScorer::compute_score(0, 0, 1, 6, true, invalid_cfg);
+    } catch (const std::invalid_argument&) {
+        caught = true;
+    }
+    REQUIRE(caught, "compute_score must reject infinite goal reward");
+
+    std::cout << "[Test] test_comparator_non_finite_and_score_configs PASSED." << std::endl;
+}
+
+// 25. Milestone 5E.2C: Checkpoint parameter immutability during beam search
+void test_checkpoint_immutability_under_beam_search() {
+    std::cout << "[Test] Running test_checkpoint_immutability_under_beam_search..." << std::endl;
+
+    std::string ckpt_path = find_checkpoint_path();
+    REQUIRE(!ckpt_path.empty(), "Checkpoint world_model_best.spark must be located");
+
+    spark::SparseGraphConfig g_cfg;
+    g_cfg.num_units = 128;
+    g_cfg.fan_in = 8;
+    g_cfg.seed = 42ULL;
+    spark::NetworkConfig n_cfg;
+    n_cfg.num_units = 128;
+    n_cfg.input_dim = 55;
+    n_cfg.output_dim = 25;
+    n_cfg.alpha = 0.8f;
+    n_cfg.beta = 1.0f;
+    n_cfg.seed = 42ULL;
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+
+    bool loaded = spark::MicroUnitNetwork::load_checkpoint(ckpt_path, net);
+    REQUIRE(loaded, "Checkpoint must load successfully");
+
+    // Snapshot exact parameters
+    auto orig_biases = net.biases();
+    auto orig_input_w = net.input_weights();
+    auto orig_output_w = net.output_weights();
+    auto orig_output_b = net.output_biases();
+    auto orig_graph_w = net.graph().weights;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 12, 128);
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 8;
+    cfg.max_depth = 4;
+
+    auto res = spark::PlanningEngine::beam_search(net, layout, root, 12, cfg);
+    (void)res;
+
+    // Verify 100% bitwise immutability
+    REQUIRE(net.biases() == orig_biases, "Biases must not mutate during beam search");
+    REQUIRE(net.input_weights() == orig_input_w, "Input weights must not mutate during beam search");
+    REQUIRE(net.output_weights() == orig_output_w, "Output weights must not mutate during beam search");
+    REQUIRE(net.output_biases() == orig_output_b, "Output biases must not mutate during beam search");
+    REQUIRE(net.graph().weights == orig_graph_w, "Graph weights must not mutate during beam search");
+
+    std::cout << "[Test] test_checkpoint_immutability_under_beam_search PASSED." << std::endl;
+}
+
+// 26. Milestone 5E.2D.1: Trained checkpoint architectural contract verification
+void test_trained_checkpoint_architecture_and_contract() {
+    std::cout << "[Test] Running test_trained_checkpoint_architecture_and_contract..." << std::endl;
+
+    std::string ckpt_path = find_checkpoint_path();
+    REQUIRE(!ckpt_path.empty(), "Checkpoint world_model_best.spark must be located");
+
+    spark::SparseGraphConfig g_cfg;
+    spark::NetworkConfig n_cfg;
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+
+    bool loaded = spark::MicroUnitNetwork::load_checkpoint(ckpt_path, net);
+    REQUIRE(loaded, "Checkpoint must load successfully");
+
+    // Validate architectural contract
+    REQUIRE(net.config().input_dim == 55, "Input dimensionality must be exactly 55");
+    REQUIRE(net.config().output_dim == 25, "Output dimensionality must be exactly 25");
+    REQUIRE(net.config().num_units == 128, "Network must have exactly 128 micro-units");
+    REQUIRE(net.config().alpha == 0.8f, "Alpha retention must be 0.8");
+    REQUIRE(net.config().beta == 1.0f, "Beta scaling must be 1.0");
+    REQUIRE(net.graph().config().fan_in == 8, "Fan-in must be 8");
+    REQUIRE(net.graph().config().num_units == 128, "Graph units must be 128");
+
+    // Verify observation encoding contract: 55 floats
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+    layout.obstacles[7] = 1;
+
+    std::vector<float> x;
+    spark::PlanningEngine::encode_model_input(0, layout, spark::Action::Right, x);
+    REQUIRE(x.size() == 55, "Encoded input size must be 55");
+    REQUIRE(x[0] == 1.0f, "Position 0 one-hot must be active");
+    REQUIRE(x[25 + 7] == 1.0f, "Obstacle 7 one-hot must be active");
+    REQUIRE(x[50 + static_cast<uint32_t>(spark::Action::Right)] == 1.0f, "Action Right one-hot must be active");
+
+    // Forward step contract: probabilities sum to 1.0
+    std::vector<float> h_out, logits, probs;
+    net.forward_step(x, logits, probs, spark::ReadoutMode::Softmax);
+    REQUIRE(probs.size() == 25, "Output probability distribution must have 25 elements");
+    float sum_p = 0.0f;
+    for (float p : probs) {
+        REQUIRE(p >= 0.0f && p <= 1.0f, "Probability values must be bounded in [0, 1]");
+        sum_p += p;
+    }
+    REQUIRE(std::abs(sum_p - 1.0f) < 1e-4f, "Probabilities must sum to 1.0");
+
+    std::cout << "[Test] test_trained_checkpoint_architecture_and_contract PASSED." << std::endl;
+}
+
+// 27. Milestone 5E.2D.1: Real trained checkpoint beam search candidate generation
+void test_trained_checkpoint_beam_search_planning() {
+    std::cout << "[Test] Running test_trained_checkpoint_beam_search_planning..." << std::endl;
+
+    std::string ckpt_path = find_checkpoint_path();
+    REQUIRE(!ckpt_path.empty(), "Checkpoint world_model_best.spark must be located");
+
+    spark::SparseGraphConfig g_cfg;
+    spark::NetworkConfig n_cfg;
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+    bool loaded = spark::MicroUnitNetwork::load_checkpoint(ckpt_path, net);
+    REQUIRE(loaded, "Checkpoint must load successfully");
+
+    // Select an unseen test layout
+    auto splits = spark::GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+    REQUIRE(!splits.test_layouts.empty(), "Test layouts must exist");
+    const auto& test_layout = splits.test_layouts[0];
+
+    // Generate a valid reachable episode
+    auto episode = spark::PlanningEpisodeGenerator::generate_reachable_episode(test_layout, 123ULL, 4, 1);
+
+    auto root = spark::PlanningEngine::create_cold_start_root(episode.start_pos, episode.goal_pos, 128, 4);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 4;
+
+    auto result = spark::PlanningEngine::beam_search(net, test_layout, root, episode.goal_pos, cfg);
+
+    // Verify search completed and generated valid candidate plans
+    REQUIRE(result.nodes_expanded > 0, "Nodes expanded must be > 0");
+    REQUIRE(result.model_evaluations > 0, "Model evaluations must be > 0");
+    REQUIRE(result.search_runtime_ms >= 0.0, "Search runtime must be non-negative");
+    REQUIRE(!result.best_plan.empty(), "Best plan must not be empty");
+    REQUIRE(result.best_plan.size() <= 4, "Plan length must not exceed max depth");
+
+    // Verify child node states
+    REQUIRE(result.best_node.predicted_position < 25, "Predicted position must be in [0, 24]");
+    REQUIRE(result.best_node.recurrent_state.size() == 128, "Recurrent state must have 128 units");
+    REQUIRE(result.best_node.mean_step_confidence > 0.0f && result.best_node.mean_step_confidence <= 1.0f,
+            "Mean step confidence must be valid probability in (0, 1]");
+
+    for (float h_val : result.best_node.recurrent_state) {
+        REQUIRE(std::isfinite(h_val), "Recurrent state activations must be finite");
+        REQUIRE(h_val > -1.0f && h_val < 1.0f, "Tanh activations must be bounded in (-1, 1)");
+    }
+
+    std::cout << "  Episode Start=(" << (episode.start_pos/5) << "," << (episode.start_pos%5)
+              << ") -> Goal=(" << (episode.goal_pos/5) << "," << (episode.goal_pos%5) << ")"
+              << " | Plan: " << result.best_plan.size() << " steps"
+              << " | Goal Reached in Imagination: " << (result.goal_reached ? "YES" : "NO")
+              << " | Score: " << result.best_node.score
+              << " | Runtime: " << result.search_runtime_ms << " ms" << std::endl;
+
+    std::cout << "[Test] test_trained_checkpoint_beam_search_planning PASSED." << std::endl;
+}
+
+// 28. Milestone 5E.2D.1: Cold-start vs warm-state root planning with real checkpoint
+void test_trained_checkpoint_cold_vs_warm_root_generation() {
+    std::cout << "[Test] Running test_trained_checkpoint_cold_vs_warm_root_generation..." << std::endl;
+
+    std::string ckpt_path = find_checkpoint_path();
+    REQUIRE(!ckpt_path.empty(), "Checkpoint world_model_best.spark must be located");
+
+    spark::SparseGraphConfig g_cfg;
+    spark::NetworkConfig n_cfg;
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+    bool loaded = spark::MicroUnitNetwork::load_checkpoint(ckpt_path, net);
+    REQUIRE(loaded, "Checkpoint must load successfully");
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    uint32_t start_pos = 6;
+    uint32_t goal_pos = 8;
+
+    // Condition 1: Cold start (h(0) = 0)
+    auto cold_root = spark::PlanningEngine::create_cold_start_root(start_pos, goal_pos, 128, 4);
+
+    // Condition 2: Legitimate warm state (past observation-action transition s_0, Stay)
+    std::vector<float> x_prior;
+    spark::PlanningEngine::encode_model_input(start_pos, layout, spark::Action::Stay, x_prior);
+    std::vector<float> warm_h, logits, probs;
+    net.forward_step(x_prior, logits, probs, spark::ReadoutMode::Softmax);
+    warm_h = net.state(); // h(1) from legitimate initial observation
+
+    auto warm_root = spark::PlanningEngine::create_warmed_up_root(start_pos, goal_pos, warm_h, 4);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 4;
+
+    auto cold_result = spark::PlanningEngine::beam_search(net, layout, cold_root, goal_pos, cfg);
+    auto warm_result = spark::PlanningEngine::beam_search(net, layout, warm_root, goal_pos, cfg);
+
+    REQUIRE(!cold_result.best_plan.empty(), "Cold start plan must not be empty");
+    REQUIRE(!warm_result.best_plan.empty(), "Warm state plan must not be empty");
+    REQUIRE(cold_result.best_node.recurrent_state != warm_result.best_node.recurrent_state,
+            "Cold start and warm state plans must produce distinct recurrent dynamics");
+
+    std::cout << "  Cold Plan: " << cold_result.best_plan.size() << " steps, Score: " << cold_result.best_node.score
+              << " | Warm Plan: " << warm_result.best_plan.size() << " steps, Score: " << warm_result.best_node.score
+              << std::endl;
+
+    std::cout << "[Test] test_trained_checkpoint_cold_vs_warm_root_generation PASSED." << std::endl;
+}
+
 int main() {
-    std::cout << "=== Running SPARK Milestone 5E.1 & 5E.2 (A/B) Planning Tests ===" << std::endl;
+    std::cout << "=== Running SPARK Milestone 5E.1, 5E.2 (A/B/C), and 5E.2D.1 Planning Tests ===" << std::endl;
 
     test_bfs_shortest_path_oracle();
     test_bfs_unreachable_and_obstacle_guards();
@@ -998,6 +1348,17 @@ int main() {
     test_mock_scenario_f_hallucination_obstacle_isolation();
     test_exhaustive_vs_beam_search_agreement();
 
-    std::cout << "All Milestone 5E.1, 5E.2A, and 5E.2B planning tests passed successfully!" << std::endl;
+    // 5E.2C tests
+    test_unfinished_routes_cannot_claim_goal();
+    test_unexpected_predictions_remain_observable();
+    test_comparator_non_finite_and_score_configs();
+    test_checkpoint_immutability_under_beam_search();
+
+    // 5E.2D.1 tests
+    test_trained_checkpoint_architecture_and_contract();
+    test_trained_checkpoint_beam_search_planning();
+    test_trained_checkpoint_cold_vs_warm_root_generation();
+
+    std::cout << "All Milestone 5E.1, 5E.2A, 5E.2B, 5E.2C, and 5E.2D.1 planning tests passed successfully!" << std::endl;
     return 0;
 }
