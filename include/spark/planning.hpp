@@ -6,8 +6,19 @@
 #include <vector>
 #include <string>
 #include <cstdint>
+#include <functional>
+#include <cmath>
 
 namespace spark {
+
+// Type definition for stateless transition predictor
+using PredictorFn = std::function<void(
+    const std::vector<float>& h_in,
+    const std::vector<float>& x,
+    std::vector<float>& h_out,
+    std::vector<float>& logits,
+    std::vector<float>& probs
+)>;
 
 // ============================================================================
 // 1. Ground-Truth BFS Reference Oracle (Validation & Reachability Only)
@@ -85,6 +96,26 @@ struct PlanningScoreConfig {
     float lambda_dist = 2.0f;
     float lambda_step = 0.5f;
     float early_goal_bonus_per_step = 1.0f; // Bonus for reaching goal earlier
+
+    bool validate(std::string& err) const {
+        if (!std::isfinite(goal_reward) || goal_reward < 0.0f) {
+            err = "goal_reward must be finite and non-negative";
+            return false;
+        }
+        if (!std::isfinite(lambda_dist) || lambda_dist < 0.0f) {
+            err = "lambda_dist must be finite and non-negative";
+            return false;
+        }
+        if (!std::isfinite(lambda_step) || lambda_step < 0.0f) {
+            err = "lambda_step must be finite and non-negative";
+            return false;
+        }
+        if (!std::isfinite(early_goal_bonus_per_step) || early_goal_bonus_per_step < 0.0f) {
+            err = "early_goal_bonus_per_step must be finite and non-negative";
+            return false;
+        }
+        return true;
+    }
 };
 
 class PlanningScorer {
@@ -114,6 +145,8 @@ struct PlanningNode {
     bool goal_reached = false;
     uint32_t manhattan_to_goal = 0;
     float target_probability = 1.0f;
+    float cum_log_confidence = 0.0f;
+    float mean_step_confidence = 1.0f;
 
     // Deterministic tie-breaking comparator:
     // Returns true if 'this' is strictly better than 'other'.
@@ -190,6 +223,18 @@ public:
         int32_t parent_index = -1
     );
 
+    // Branch expansion using custom/mock predictor function
+    static PlanningNode expand_branch_custom(
+        const PredictorFn& predictor,
+        const GridWorldLayout& layout,
+        const PlanningNode& parent,
+        Action action,
+        uint32_t goal_pos,
+        uint32_t max_steps = 16,
+        const PlanningScoreConfig& score_cfg = PlanningScoreConfig(),
+        int32_t parent_index = -1
+    );
+
     // Expand all 5 candidate actions from parent node
     static std::vector<PlanningNode> expand_all_actions(
         const MicroUnitNetwork& net,
@@ -201,9 +246,29 @@ public:
         int32_t parent_index = -1
     );
 
+    // Expand all 5 candidate actions using custom predictor
+    static std::vector<PlanningNode> expand_all_actions_custom(
+        const PredictorFn& predictor,
+        const GridWorldLayout& layout,
+        const PlanningNode& parent,
+        uint32_t goal_pos,
+        uint32_t max_steps = 16,
+        const PlanningScoreConfig& score_cfg = PlanningScoreConfig(),
+        int32_t parent_index = -1
+    );
+
     // Bounded Beam Search Planner (Milestone 5E.2)
     static PlanningSearchResult beam_search(
         const MicroUnitNetwork& net,
+        const GridWorldLayout& layout,
+        const PlanningNode& root,
+        uint32_t goal_pos,
+        const BeamSearchConfig& config
+    );
+
+    // Bounded Beam Search Planner using custom/mock predictor
+    static PlanningSearchResult beam_search_custom(
+        const PredictorFn& predictor,
         const GridWorldLayout& layout,
         const PlanningNode& root,
         uint32_t goal_pos,
@@ -222,6 +287,16 @@ public:
     // Strategy C: Shallow exhaustive search (depth 1 to 3)
     static PlanningSearchResult exhaustive_search(
         const MicroUnitNetwork& net,
+        const GridWorldLayout& layout,
+        const PlanningNode& root,
+        uint32_t goal_pos,
+        uint32_t depth = 3,
+        const PlanningScoreConfig& score_cfg = PlanningScoreConfig()
+    );
+
+    // Shallow exhaustive search using custom predictor
+    static PlanningSearchResult exhaustive_search_custom(
+        const PredictorFn& predictor,
         const GridWorldLayout& layout,
         const PlanningNode& root,
         uint32_t goal_pos,

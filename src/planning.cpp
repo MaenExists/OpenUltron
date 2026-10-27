@@ -234,6 +234,11 @@ float PlanningScorer::compute_score(
     const PlanningScoreConfig& cfg,
     uint32_t grid_width
 ) {
+    std::string err;
+    if (!cfg.validate(err)) {
+        throw std::invalid_argument("Invalid PlanningScoreConfig: " + err);
+    }
+
     uint32_t D = PlanningEngine::compute_manhattan_distance(predicted_pos, goal_pos, grid_width);
     float score = -cfg.lambda_dist * static_cast<float>(D) - cfg.lambda_step * static_cast<float>(depth);
 
@@ -244,6 +249,10 @@ float PlanningScorer::compute_score(
         }
     }
 
+    if (!std::isfinite(score)) {
+        throw std::runtime_error("PlanningScorer computed non-finite score");
+    }
+
     return score;
 }
 
@@ -251,15 +260,14 @@ float PlanningScorer::compute_score(
 // 4. Planning Node Implementation
 // ============================================================================
 bool PlanningNode::is_better_than(const PlanningNode& other) const {
-    // 1. Primary: Score comparison (with numerical tolerance)
-    const float score_diff = score - other.score;
-    if (std::abs(score_diff) > 1e-4f) {
-        return score_diff > 0.0f;
+    // 1. Primary: Score comparison (strict scalar comparison for Strict Weak Ordering)
+    if (score != other.score) {
+        return score > other.score;
     }
 
     // 2. Tie-break: Goal reached preference
     if (goal_reached != other.goal_reached) {
-        return goal_reached;
+        return goal_reached; // true > false
     }
 
     // 3. Tie-break: Manhattan distance to goal (closer is better)
@@ -272,13 +280,18 @@ bool PlanningNode::is_better_than(const PlanningNode& other) const {
         return depth < other.depth;
     }
 
-    // 5. Tie-break: Model prediction confidence
-    if (std::abs(target_probability - other.target_probability) > 1e-4f) {
+    // 5. Tie-break: Cumulative log confidence (higher is better)
+    if (cum_log_confidence != other.cum_log_confidence) {
+        return cum_log_confidence > other.cum_log_confidence;
+    }
+
+    // 6. Tie-break: Target probability (higher is better)
+    if (target_probability != other.target_probability) {
         return target_probability > other.target_probability;
     }
 
-    // 6. Strict deterministic tie-break: Lexicographical action sequence
-    size_t min_len = std::min(actions_from_root.size(), other.actions_from_root.size());
+    // 7. Strict deterministic tie-break: Lexicographical action sequence
+    const size_t min_len = std::min(actions_from_root.size(), other.actions_from_root.size());
     for (size_t i = 0; i < min_len; ++i) {
         auto a1 = static_cast<uint8_t>(actions_from_root[i]);
         auto a2 = static_cast<uint8_t>(other.actions_from_root[i]);
@@ -287,7 +300,12 @@ bool PlanningNode::is_better_than(const PlanningNode& other) const {
         }
     }
 
-    return actions_from_root.size() < other.actions_from_root.size();
+    if (actions_from_root.size() != other.actions_from_root.size()) {
+        return actions_from_root.size() < other.actions_from_root.size();
+    }
+
+    // Nodes are completely identical under this ordering
+    return false;
 }
 
 // ============================================================================
@@ -319,6 +337,8 @@ PlanningNode PlanningEngine::create_cold_start_root(
     root.goal_reached = (start_pos == goal_pos);
     root.manhattan_to_goal = compute_manhattan_distance(start_pos, goal_pos, 5);
     root.target_probability = 1.0f;
+    root.cum_log_confidence = 0.0f;
+    root.mean_step_confidence = 1.0f;
     root.score = PlanningScorer::compute_score(
         start_pos, goal_pos, 0, max_steps, root.goal_reached, score_cfg, 5
     );
@@ -342,6 +362,8 @@ PlanningNode PlanningEngine::create_warmed_up_root(
     root.goal_reached = (current_pos == goal_pos);
     root.manhattan_to_goal = compute_manhattan_distance(current_pos, goal_pos, 5);
     root.target_probability = 1.0f;
+    root.cum_log_confidence = 0.0f;
+    root.mean_step_confidence = 1.0f;
     root.score = PlanningScorer::compute_score(
         current_pos, goal_pos, 0, max_steps, root.goal_reached, score_cfg, 5
     );
@@ -375,8 +397,8 @@ void PlanningEngine::encode_model_input(
     }
 }
 
-PlanningNode PlanningEngine::expand_branch(
-    const MicroUnitNetwork& net,
+PlanningNode PlanningEngine::expand_branch_custom(
+    const PredictorFn& predictor,
     const GridWorldLayout& layout,
     const PlanningNode& parent,
     Action action,
@@ -396,19 +418,23 @@ PlanningNode PlanningEngine::expand_branch(
     std::vector<float> x;
     encode_model_input(parent.predicted_position, layout, action, x);
 
-    // Branching forward step: advances from parent's recurrent state without mutating net
+    // Branching forward step: advances from parent's recurrent state
     std::vector<float> child_state;
     std::vector<float> logits;
     std::vector<float> probs;
 
-    net.forward_step_branching(
+    predictor(
         parent.recurrent_state,
         x,
         child_state,
         logits,
-        probs,
-        ReadoutMode::Softmax
+        probs
     );
+
+    // Defensive check
+    if (probs.empty()) {
+        probs.assign(GridWorldEnv::NUM_CELLS, 1.0f / static_cast<float>(GridWorldEnv::NUM_CELLS));
+    }
 
     // Argmax predicted next position
     uint32_t pred_pos = static_cast<uint32_t>(
@@ -419,7 +445,16 @@ PlanningNode PlanningEngine::expand_branch(
     child.recurrent_state = std::move(child_state);
     child.goal_reached = (pred_pos == goal_pos);
     child.manhattan_to_goal = compute_manhattan_distance(pred_pos, goal_pos, layout.width);
-    child.target_probability = (pred_pos < probs.size()) ? probs[pred_pos] : 0.0f;
+
+    float p_t = (pred_pos < probs.size()) ? probs[pred_pos] : 0.0f;
+    child.target_probability = p_t;
+
+    // Numerical safety clamp to avoid log(0)
+    const float eps = 1e-7f;
+    float step_log_p = std::log(std::max(p_t, eps));
+    child.cum_log_confidence = parent.cum_log_confidence + step_log_p;
+    child.mean_step_confidence = std::exp(child.cum_log_confidence / static_cast<float>(child.depth));
+
     child.score = PlanningScorer::compute_score(
         pred_pos,
         goal_pos,
@@ -433,8 +468,84 @@ PlanningNode PlanningEngine::expand_branch(
     return child;
 }
 
+PlanningNode PlanningEngine::expand_branch(
+    const MicroUnitNetwork& net,
+    const GridWorldLayout& layout,
+    const PlanningNode& parent,
+    Action action,
+    uint32_t goal_pos,
+    uint32_t max_steps,
+    const PlanningScoreConfig& score_cfg,
+    int32_t parent_index
+) {
+    PredictorFn predictor = [&net](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        net.forward_step_branching(
+            h_in,
+            x,
+            h_out,
+            logits,
+            probs,
+            ReadoutMode::Softmax
+        );
+    };
+
+    return expand_branch_custom(
+        predictor,
+        layout,
+        parent,
+        action,
+        goal_pos,
+        max_steps,
+        score_cfg,
+        parent_index
+    );
+}
+
 std::vector<PlanningNode> PlanningEngine::expand_all_actions(
     const MicroUnitNetwork& net,
+    const GridWorldLayout& layout,
+    const PlanningNode& parent,
+    uint32_t goal_pos,
+    uint32_t max_steps,
+    const PlanningScoreConfig& score_cfg,
+    int32_t parent_index
+) {
+    PredictorFn predictor = [&net](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        net.forward_step_branching(
+            h_in,
+            x,
+            h_out,
+            logits,
+            probs,
+            ReadoutMode::Softmax
+        );
+    };
+
+    return expand_all_actions_custom(
+        predictor,
+        layout,
+        parent,
+        goal_pos,
+        max_steps,
+        score_cfg,
+        parent_index
+    );
+}
+
+std::vector<PlanningNode> PlanningEngine::expand_all_actions_custom(
+    const PredictorFn& predictor,
     const GridWorldLayout& layout,
     const PlanningNode& parent,
     uint32_t goal_pos,
@@ -454,8 +565,8 @@ std::vector<PlanningNode> PlanningEngine::expand_all_actions(
     children.reserve(candidate_actions.size());
 
     for (Action a : candidate_actions) {
-        children.push_back(expand_branch(
-            net, layout, parent, a, goal_pos, max_steps, score_cfg, parent_index
+        children.push_back(expand_branch_custom(
+            predictor, layout, parent, a, goal_pos, max_steps, score_cfg, parent_index
         ));
     }
 
@@ -464,6 +575,39 @@ std::vector<PlanningNode> PlanningEngine::expand_all_actions(
 
 PlanningSearchResult PlanningEngine::beam_search(
     const MicroUnitNetwork& net,
+    const GridWorldLayout& layout,
+    const PlanningNode& root,
+    uint32_t goal_pos,
+    const BeamSearchConfig& config
+) {
+    PredictorFn predictor = [&net](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        net.forward_step_branching(
+            h_in,
+            x,
+            h_out,
+            logits,
+            probs,
+            ReadoutMode::Softmax
+        );
+    };
+
+    return beam_search_custom(
+        predictor,
+        layout,
+        root,
+        goal_pos,
+        config
+    );
+}
+
+PlanningSearchResult PlanningEngine::beam_search_custom(
+    const PredictorFn& predictor,
     const GridWorldLayout& layout,
     const PlanningNode& root,
     uint32_t goal_pos,
@@ -506,7 +650,7 @@ PlanningSearchResult PlanningEngine::beam_search(
     std::vector<PlanningNode> current_beam;
     current_beam.push_back(root);
 
-    // Track best overall non-root candidate across search
+    // Track best overall non-root candidate across search (fallback if no goal reached)
     bool has_best_candidate = false;
     PlanningNode best_overall_candidate;
 
@@ -525,8 +669,8 @@ PlanningSearchResult PlanningEngine::beam_search(
 
             // Expand all 5 hypothetical actions
             for (Action a : candidate_actions) {
-                PlanningNode child = expand_branch(
-                    net,
+                PlanningNode child = expand_branch_custom(
+                    predictor,
                     layout,
                     parent,
                     a,
@@ -536,7 +680,7 @@ PlanningSearchResult PlanningEngine::beam_search(
                 );
                 result.model_evaluations++;
 
-                // Track best non-root candidate
+                // Track best non-root candidate for fallback
                 if (!has_best_candidate || child.is_better_than(best_overall_candidate)) {
                     best_overall_candidate = child;
                     has_best_candidate = true;
@@ -575,7 +719,8 @@ PlanningSearchResult PlanningEngine::beam_search(
         current_beam = std::move(next_candidates);
     }
 
-    // Determine final best plan
+    // Determine final best plan:
+    // Strict separation: completed goal candidates take absolute priority over unfinished candidates
     if (!result.completed_goal_candidates.empty()) {
         std::sort(result.completed_goal_candidates.begin(), result.completed_goal_candidates.end(),
             [](const PlanningNode& a, const PlanningNode& b) {
@@ -633,6 +778,24 @@ PlanningSearchResult PlanningEngine::exhaustive_search(
     cfg.max_depth = depth;
     cfg.score_cfg = score_cfg;
     return beam_search(net, layout, root, goal_pos, cfg);
+}
+
+PlanningSearchResult PlanningEngine::exhaustive_search_custom(
+    const PredictorFn& predictor,
+    const GridWorldLayout& layout,
+    const PlanningNode& root,
+    uint32_t goal_pos,
+    uint32_t depth,
+    const PlanningScoreConfig& score_cfg
+) {
+    if (depth > 4) {
+        throw std::invalid_argument("Exhaustive search depth must be <= 4 to prevent exponential blowup");
+    }
+    BeamSearchConfig cfg;
+    cfg.beam_width = static_cast<uint32_t>(std::pow(5, depth));
+    cfg.max_depth = depth;
+    cfg.score_cfg = score_cfg;
+    return beam_search_custom(predictor, layout, root, goal_pos, cfg);
 }
 
 } // namespace spark

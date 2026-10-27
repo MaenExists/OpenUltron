@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <cassert>
+#include <algorithm>
 
 #define REQUIRE(cond, msg) \
     do { \
@@ -493,8 +494,483 @@ void test_beam_search_goal_preservation_across_depths() {
     std::cout << "[Test] test_beam_search_goal_preservation_across_depths PASSED." << std::endl;
 }
 
+// 12. Milestone 5E.2B: Test Scoring Config Validation and Mathematical Formulation
+void test_scoring_validation_and_objective() {
+    std::cout << "[Test] Running test_scoring_validation_and_objective..." << std::endl;
+
+    // 1. Validation checks
+    spark::PlanningScoreConfig cfg;
+    std::string err;
+    REQUIRE(cfg.validate(err), "Default PlanningScoreConfig must be valid");
+
+    spark::PlanningScoreConfig invalid_cfg1 = cfg;
+    invalid_cfg1.goal_reward = -10.0f;
+    REQUIRE(!invalid_cfg1.validate(err), "Negative goal_reward must fail validation");
+
+    spark::PlanningScoreConfig invalid_cfg2 = cfg;
+    invalid_cfg2.lambda_dist = -1.0f;
+    REQUIRE(!invalid_cfg2.validate(err), "Negative lambda_dist must fail validation");
+
+    spark::PlanningScoreConfig invalid_cfg3 = cfg;
+    invalid_cfg3.lambda_step = -0.5f;
+    REQUIRE(!invalid_cfg3.validate(err), "Negative lambda_step must fail validation");
+
+    spark::PlanningScoreConfig invalid_cfg4 = cfg;
+    invalid_cfg4.early_goal_bonus_per_step = NAN;
+    REQUIRE(!invalid_cfg4.validate(err), "NaN early_goal_bonus must fail validation");
+
+    bool caught_exception = false;
+    try {
+        spark::PlanningScorer::compute_score(0, 0, 1, 16, true, invalid_cfg1);
+    } catch (const std::invalid_argument&) {
+        caught_exception = true;
+    }
+    REQUIRE(caught_exception, "compute_score must throw std::invalid_argument for invalid config");
+
+    // 2. Exact mathematical formulation checks:
+    // J(n) = R_g * 1_goal - lambda_d * D(n,g) - lambda_s * L(n) + lambda_e * 1_goal * (H_max - L(n))
+    spark::PlanningScoreConfig test_cfg;
+    test_cfg.goal_reward = 100.0f;
+    test_cfg.lambda_dist = 2.0f;
+    test_cfg.lambda_step = 0.5f;
+    test_cfg.early_goal_bonus_per_step = 1.0f;
+
+    // Case A: Goal reached at depth 2 (max_steps = 6, D = 0)
+    // J = 100(1) - 2(0) - 0.5(2) + 1.0(1)(6 - 2) = 100 - 1.0 + 4.0 = 103.0f
+    float score_a = spark::PlanningScorer::compute_score(2, 2, 2, 6, true, test_cfg);
+    REQUIRE(std::abs(score_a - 103.0f) < 1e-5f, "Score for goal at depth 2 must equal exactly 103.0");
+
+    // Case B: Unfinished candidate at depth 2, pos 1, goal 2 (D = 1)
+    // J = 100(0) - 2(1) - 0.5(2) + 1.0(0)(6 - 2) = 0 - 2.0 - 1.0 = -3.0f
+    float score_b = spark::PlanningScorer::compute_score(1, 2, 2, 6, false, test_cfg);
+    REQUIRE(std::abs(score_b - (-3.0f)) < 1e-5f, "Score for unfinished candidate must equal exactly -3.0");
+
+    // Case C: Goal reached at depth 6 (max_steps = 6, D = 0, early bonus = 0)
+    // J = 100(1) - 2(0) - 0.5(6) + 1.0(1)(6 - 6) = 100 - 3.0 + 0 = 97.0f
+    float score_c = spark::PlanningScorer::compute_score(2, 2, 6, 6, true, test_cfg);
+    REQUIRE(std::abs(score_c - 97.0f) < 1e-5f, "Score for goal at max depth must equal exactly 97.0");
+
+    std::cout << "[Test] test_scoring_validation_and_objective PASSED." << std::endl;
+}
+
+// 13. Milestone 5E.2B: Test Strict Weak Ordering Axioms for PlanningNode::is_better_than
+void test_strict_weak_ordering_axioms() {
+    std::cout << "[Test] Running test_strict_weak_ordering_axioms..." << std::endl;
+
+    // Generate diverse test nodes
+    std::vector<spark::PlanningNode> nodes;
+    const std::vector<float> scores = {-10.0f, -5.0f, 0.0f, 50.0f, 100.0f, 103.0f};
+    const std::vector<bool> goals = {false, true};
+    const std::vector<uint32_t> dists = {0, 1, 3};
+    const std::vector<uint32_t> depths = {1, 2, 4};
+    const std::vector<float> confs = {0.2f, 0.8f, 1.0f};
+    const std::vector<std::vector<spark::Action>> action_seqs = {
+        {spark::Action::Up},
+        {spark::Action::Down},
+        {spark::Action::Left},
+        {spark::Action::Right},
+        {spark::Action::Up, spark::Action::Right},
+        {spark::Action::Down, spark::Action::Left}
+    };
+
+    spark::Random rng(12345ULL);
+    for (size_t i = 0; i < 40; ++i) {
+        spark::PlanningNode n;
+        n.score = scores[rng.next_u64() % scores.size()];
+        n.goal_reached = goals[rng.next_u64() % goals.size()];
+        n.manhattan_to_goal = dists[rng.next_u64() % dists.size()];
+        n.depth = depths[rng.next_u64() % depths.size()];
+        n.cum_log_confidence = -static_cast<float>(rng.next_u64() % 500) / 100.0f;
+        n.target_probability = confs[rng.next_u64() % confs.size()];
+        n.actions_from_root = action_seqs[rng.next_u64() % action_seqs.size()];
+        nodes.push_back(n);
+    }
+
+    const size_t N = nodes.size();
+
+    // 1. Irreflexivity: !(a < a)
+    for (size_t i = 0; i < N; ++i) {
+        REQUIRE(!nodes[i].is_better_than(nodes[i]), "Ordering must be irreflexive: !(a < a)");
+    }
+
+    // 2. Asymmetry: a < b => !(b < a)
+    for (size_t i = 0; i < N; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            if (nodes[i].is_better_than(nodes[j])) {
+                REQUIRE(!nodes[j].is_better_than(nodes[i]), "Ordering must be asymmetric: a < b => !(b < a)");
+            }
+        }
+    }
+
+    // 3. Transitivity: a < b and b < c => a < c
+    for (size_t i = 0; i < N; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            if (!nodes[i].is_better_than(nodes[j])) continue;
+            for (size_t k = 0; k < N; ++k) {
+                if (nodes[j].is_better_than(nodes[k])) {
+                    REQUIRE(nodes[i].is_better_than(nodes[k]),
+                            "Ordering must be transitive: a < b && b < c => a < c");
+                }
+            }
+        }
+    }
+
+    // 4. Incomparability transitivity:
+    // If a ~ b and b ~ c then a ~ c where a ~ b <=> !(a < b) && !(b < a)
+    for (size_t i = 0; i < N; ++i) {
+        for (size_t j = 0; j < N; ++j) {
+            bool incomp_ij = !nodes[i].is_better_than(nodes[j]) && !nodes[j].is_better_than(nodes[i]);
+            if (!incomp_ij) continue;
+            for (size_t k = 0; k < N; ++k) {
+                bool incomp_jk = !nodes[j].is_better_than(nodes[k]) && !nodes[k].is_better_than(nodes[j]);
+                if (incomp_jk) {
+                    bool incomp_ik = !nodes[i].is_better_than(nodes[k]) && !nodes[k].is_better_than(nodes[i]);
+                    REQUIRE(incomp_ik, "Transitivity of incomparability must hold");
+                }
+            }
+        }
+    }
+
+    // 5. Test std::sort stability / no UB
+    std::sort(nodes.begin(), nodes.end(), [](const spark::PlanningNode& a, const spark::PlanningNode& b) {
+        return a.is_better_than(b);
+    });
+
+    for (size_t i = 0; i + 1 < nodes.size(); ++i) {
+        REQUIRE(!nodes[i + 1].is_better_than(nodes[i]), "Sorted array must be non-ascending under is_better_than");
+    }
+
+    std::cout << "[Test] test_strict_weak_ordering_axioms PASSED." << std::endl;
+}
+
+// 14. Milestone 5E.2B: Test Confidence Tracking across Expansions
+void test_confidence_tracking() {
+    std::cout << "[Test] Running test_confidence_tracking..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    // Mock predictor returning specified step transition probabilities
+    float step_prob = 0.8f;
+    spark::PredictorFn mock_pred = [&step_prob](
+        const std::vector<float>& h_in,
+        const std::vector<float>&,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        h_out = h_in;
+        logits.assign(25, 0.0f);
+        probs.assign(25, (1.0f - step_prob) / 24.0f);
+        probs[0] = step_prob; // Always predict position 0 with probability step_prob
+    };
+
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 10, 128);
+    REQUIRE(root.cum_log_confidence == 0.0f, "Root cum_log_confidence must be 0.0");
+    REQUIRE(root.mean_step_confidence == 1.0f, "Root mean_step_confidence must be 1.0");
+
+    step_prob = 0.8f;
+    auto child1 = spark::PlanningEngine::expand_branch_custom(mock_pred, layout, root, spark::Action::Down, 10);
+    REQUIRE(std::abs(child1.target_probability - 0.8f) < 1e-5f, "Child 1 target probability must be 0.8");
+    REQUIRE(std::abs(child1.cum_log_confidence - std::log(0.8f)) < 1e-5f, "Child 1 cum_log_confidence must be log(0.8)");
+    REQUIRE(std::abs(child1.mean_step_confidence - 0.8f) < 1e-5f, "Child 1 mean_step_confidence must be 0.8");
+
+    step_prob = 0.5f;
+    auto child2 = spark::PlanningEngine::expand_branch_custom(mock_pred, layout, child1, spark::Action::Down, 10);
+    float expected_cum_log_2 = std::log(0.8f) + std::log(0.5f);
+    float expected_mean_2 = std::exp(expected_cum_log_2 / 2.0f);
+    REQUIRE(std::abs(child2.target_probability - 0.5f) < 1e-5f, "Child 2 target probability must be 0.5");
+    REQUIRE(std::abs(child2.cum_log_confidence - expected_cum_log_2) < 1e-5f, "Child 2 cum_log_confidence check");
+    REQUIRE(std::abs(child2.mean_step_confidence - expected_mean_2) < 1e-5f, "Child 2 mean_step_confidence check");
+
+    step_prob = 0.9f;
+    auto child3 = spark::PlanningEngine::expand_branch_custom(mock_pred, layout, child2, spark::Action::Down, 10);
+    float expected_cum_log_3 = expected_cum_log_2 + std::log(0.9f);
+    float expected_mean_3 = std::exp(expected_cum_log_3 / 3.0f);
+    REQUIRE(std::abs(child3.target_probability - 0.9f) < 1e-5f, "Child 3 target probability must be 0.9");
+    REQUIRE(std::abs(child3.cum_log_confidence - expected_cum_log_3) < 1e-5f, "Child 3 cum_log_confidence check");
+    REQUIRE(std::abs(child3.mean_step_confidence - expected_mean_3) < 1e-5f, "Child 3 mean_step_confidence check");
+
+    std::cout << "[Test] test_confidence_tracking PASSED." << std::endl;
+}
+
+// Deterministic Mock GridWorld Predictor Factory
+static spark::PredictorFn create_mock_grid_predictor(float prob = 0.95f, bool hallucinate_walls = false) {
+    return [prob, hallucinate_walls](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        h_out = h_in;
+        logits.assign(25, 0.0f);
+        probs.assign(25, (1.0f - prob) / 24.0f);
+
+        // Decode current_pos from one-hot x[0..24]
+        uint32_t curr_pos = 0;
+        for (uint32_t i = 0; i < 25; ++i) {
+            if (x[i] > 0.5f) { curr_pos = i; break; }
+        }
+
+        // Decode action from x[50..54]
+        spark::Action action = spark::Action::Stay;
+        for (uint32_t a = 0; a < 5; ++a) {
+            if (x[50 + a] > 0.5f) { action = static_cast<spark::Action>(a); break; }
+        }
+
+        int r = static_cast<int>(curr_pos / 5);
+        int c = static_cast<int>(curr_pos % 5);
+        int nr = r, nc = c;
+        if (action == spark::Action::Up) nr--;
+        else if (action == spark::Action::Down) nr++;
+        else if (action == spark::Action::Left) nc--;
+        else if (action == spark::Action::Right) nc++;
+
+        if (nr >= 0 && nr < 5 && nc >= 0 && nc < 5) {
+            uint32_t next_cell = static_cast<uint32_t>(nr * 5 + nc);
+            if (hallucinate_walls || x[25 + next_cell] <= 0.5f) {
+                curr_pos = next_cell;
+            }
+        }
+
+        probs[curr_pos] = prob;
+    };
+}
+
+// 15. Milestone 5E.2B: Scenario A — Short Route vs Long Route to Same Goal
+void test_mock_scenario_a_short_vs_long_route() {
+    std::cout << "[Test] Running test_mock_scenario_a_short_vs_long_route..." << std::endl;
+
+    // Start at (0,0)=0, Goal at (0,2)=2
+    // Short route: Right, Right (length 2)
+    // Long route: Down, Right, Right, Up (length 4)
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto mock_pred = create_mock_grid_predictor(0.98f);
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 2, 128);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 8;
+    cfg.max_depth = 6;
+    cfg.return_first_goal = false; // Search all horizons to ensure both routes are evaluated
+
+    auto result = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 2, cfg);
+
+    REQUIRE(result.goal_reached, "Goal must be reached");
+    REQUIRE(result.best_node.goal_reached, "Best node must have reached goal");
+    REQUIRE(result.best_node.depth == 2, "Shorter 2-step route must be selected over longer route");
+    REQUIRE(result.best_plan.size() == 2, "Best plan size must be 2");
+    REQUIRE(result.best_plan[0] == spark::Action::Right && result.best_plan[1] == spark::Action::Right,
+            "Best plan must be [Right, Right]");
+
+    std::cout << "[Test] test_mock_scenario_a_short_vs_long_route PASSED." << std::endl;
+}
+
+// 16. Milestone 5E.2B: Scenario B — Misleading Unfinished Heuristic vs Completed Goal
+void test_mock_scenario_b_heuristic_vs_completed_goal() {
+    std::cout << "[Test] Running test_mock_scenario_b_heuristic_vs_completed_goal..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto mock_pred = create_mock_grid_predictor(0.95f);
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 1, 128); // Goal is 1 step away: (0,1)=1
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 4;
+    cfg.return_first_goal = false;
+
+    auto result = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 1, cfg);
+
+    REQUIRE(result.goal_reached, "Goal must be reached");
+    REQUIRE(!result.completed_goal_candidates.empty(), "Completed candidates must exist");
+    REQUIRE(result.best_node.goal_reached, "Best node must be completed candidate");
+    REQUIRE(result.best_node.depth == 1, "Completed route at depth 1 must beat any unfinished candidate");
+    REQUIRE(result.best_plan.size() == 1, "Plan must have 1 step");
+    REQUIRE(result.best_plan[0] == spark::Action::Right, "Plan must be [Right]");
+
+    std::cout << "[Test] test_mock_scenario_b_heuristic_vs_completed_goal PASSED." << std::endl;
+}
+
+// 17. Milestone 5E.2B: Scenario C — Early Goal Preservation Across Search Depths
+void test_mock_scenario_c_early_goal_preservation() {
+    std::cout << "[Test] Running test_mock_scenario_c_early_goal_preservation..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto mock_pred = create_mock_grid_predictor(0.95f);
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 2, 128); // Goal at (0,2)=2
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 6;
+    cfg.return_first_goal = false; // Search continues through depth 6
+
+    auto result = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 2, cfg);
+
+    REQUIRE(result.goal_reached, "Goal must be reached");
+    REQUIRE(result.depth_reached == 6, "Search must reach max_depth 6 without prematurely dropping early goal");
+    REQUIRE(!result.completed_goal_candidates.empty(), "Completed goal list must retain candidate");
+    REQUIRE(result.best_node.depth == 2, "Early completed goal at depth 2 must be preserved as best node");
+    REQUIRE(result.best_node.predicted_position == 2, "Predicted position must be 2");
+
+    std::cout << "[Test] test_mock_scenario_c_early_goal_preservation PASSED." << std::endl;
+}
+
+// 18. Milestone 5E.2B: Scenario D — Exact Score Tie-Breaking Determinism
+void test_mock_scenario_d_tie_breaking_determinism() {
+    std::cout << "[Test] Running test_mock_scenario_d_tie_breaking_determinism..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto mock_pred = create_mock_grid_predictor(0.95f);
+    // Start at (0,0)=0, Goal at (2,2)=12.
+    // At depth 2:
+    //   Path 1: [Down, Down] reaches cell (2,0)=10 (distance to 12 is 2, actions [1, 1])
+    //   Path 2: [Down, Right] reaches cell (1,1)=6 (distance to 12 is 2, actions [1, 3])
+    //   Path 3: [Right, Down] reaches cell (1,1)=6 (distance to 12 is 2, actions [3, 1])
+    //   Path 4: [Right, Right] reaches cell (0,2)=2 (distance to 12 is 2, actions [3, 3])
+    // All four paths produce identical distance D=2, identical depth L=2, and identical score J=-5.0.
+    // Deterministic lexicographical tie-breaking compares actions element-wise:
+    //   [1, 1] vs [1, 3] vs [3, 1] vs [3, 3]
+    // Since 1 < 3, [1, 1] ([Down, Down]) strictly wins first place!
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 12, 128);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 2;
+
+    auto ref_result = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 12, cfg);
+
+    REQUIRE(ref_result.best_plan.size() == 2, "Best plan must have depth 2");
+    REQUIRE(ref_result.best_plan[0] == spark::Action::Down, "Deterministic tie-breaking must favor Down over Right");
+    REQUIRE(ref_result.best_plan[1] == spark::Action::Down, "Deterministic tie-breaking must favor [Down, Down] over [Down, Right]");
+
+    // Repeat 100 times to guarantee deterministic tie-breaking across runs
+    for (int run = 0; run < 100; ++run) {
+        auto run_result = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 12, cfg);
+        REQUIRE(run_result.best_plan == ref_result.best_plan,
+                "Tie-breaking must be bitwise deterministic across 100 repeated runs");
+        REQUIRE(run_result.best_node.score == ref_result.best_node.score,
+                "Score must be bitwise identical across 100 repeated runs");
+    }
+
+    std::cout << "[Test] test_mock_scenario_d_tie_breaking_determinism PASSED." << std::endl;
+}
+
+// 19. Milestone 5E.2B: Scenario E — No Reachable Goal Fallback
+void test_mock_scenario_e_no_reachable_goal_fallback() {
+    std::cout << "[Test] Running test_mock_scenario_e_no_reachable_goal_fallback..." << std::endl;
+
+    // Goal at (4,4)=24, but max_depth is 2. Goal cannot be reached in 2 steps.
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto mock_pred = create_mock_grid_predictor(0.95f);
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 24, 128);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 2;
+
+    auto result = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 24, cfg);
+
+    REQUIRE(!result.goal_reached, "Goal must NOT be marked reached");
+    REQUIRE(result.completed_goal_candidates.empty(), "Completed goal list must be empty");
+    REQUIRE(result.best_node.predicted_position != 24, "Final position cannot reach 24");
+    REQUIRE(result.best_plan.size() == 2, "Fallback must return best partial path of depth 2");
+    REQUIRE(result.nodes_expanded > 0, "Nodes expanded must be tracked");
+    REQUIRE(result.model_evaluations > 0, "Model evaluations must be tracked");
+
+    // Start at 0, moving Down then Down or Right then Down brings distance to goal down from 8 to 6
+    REQUIRE(result.best_node.manhattan_to_goal == 6, "Fallback must pick closest candidate to goal");
+
+    std::cout << "[Test] test_mock_scenario_e_no_reachable_goal_fallback PASSED." << std::endl;
+}
+
+// 20. Milestone 5E.2B: Scenario F — Model Hallucination Obstacle Isolation
+void test_mock_scenario_f_hallucination_obstacle_isolation() {
+    std::cout << "[Test] Running test_mock_scenario_f_hallucination_obstacle_isolation..." << std::endl;
+
+    // Real environment layout has obstacle at (0,1)=1
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+    layout.obstacles[1] = 1; // Wall at (0,1)
+
+    // Simulator reference path requires a 4-step detour around cell 1
+    auto ground_truth_bfs = spark::BFSSolver::find_shortest_path(layout, 0, 2);
+    REQUIRE(ground_truth_bfs.shortest_path_length == 4, "Ground truth oracle requires 4 steps");
+
+    // But the predictive model hallucinations passage through walls (hallucinate_walls = true)
+    auto hallucinating_mock_pred = create_mock_grid_predictor(0.95f, /*hallucinate_walls=*/true);
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 2, 128);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 4;
+
+    auto result = spark::PlanningEngine::beam_search_custom(hallucinating_mock_pred, layout, root, 2, cfg);
+
+    // The model-based planner plans purely according to the model's hypothetical predictions.
+    // It DOES NOT consult the ground truth simulator or override model outputs.
+    REQUIRE(result.goal_reached, "Model believes goal is reached");
+    REQUIRE(result.best_plan.size() == 2, "Model plans 2 steps straight through the obstacle");
+    REQUIRE(result.best_plan[0] == spark::Action::Right && result.best_plan[1] == spark::Action::Right,
+            "Model plans [Right, Right] believing wall is passable");
+
+    std::cout << "[Test] test_mock_scenario_f_hallucination_obstacle_isolation PASSED." << std::endl;
+}
+
+// 21. Milestone 5E.2B: Exhaustive Search vs Beam Search Agreement
+void test_exhaustive_vs_beam_search_agreement() {
+    std::cout << "[Test] Running test_exhaustive_vs_beam_search_agreement..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    auto mock_pred = create_mock_grid_predictor(0.95f);
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 12, 128);
+
+    // At depth 2, total search space is 5^2 = 25.
+    // Bounded beam search with beam_width=25 explores the full exhaustive tree.
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 25;
+    cfg.max_depth = 2;
+
+    auto beam_res = spark::PlanningEngine::beam_search_custom(mock_pred, layout, root, 12, cfg);
+    auto exh_res = spark::PlanningEngine::exhaustive_search_custom(mock_pred, layout, root, 12, 2);
+
+    REQUIRE(beam_res.best_plan == exh_res.best_plan, "Beam search (K=25) and Exhaustive search must produce identical plan");
+    REQUIRE(beam_res.best_node.score == exh_res.best_node.score, "Scores must match identically");
+    REQUIRE(beam_res.best_node.predicted_position == exh_res.best_node.predicted_position, "Final positions must match identically");
+    REQUIRE(beam_res.nodes_expanded == exh_res.nodes_expanded, "Expanded node count must match");
+
+    std::cout << "[Test] test_exhaustive_vs_beam_search_agreement PASSED." << std::endl;
+}
+
 int main() {
-    std::cout << "=== Running SPARK Milestone 5E.1 & 5E.2A Planning Tests ===" << std::endl;
+    std::cout << "=== Running SPARK Milestone 5E.1 & 5E.2 (A/B) Planning Tests ===" << std::endl;
 
     test_bfs_shortest_path_oracle();
     test_bfs_unreachable_and_obstacle_guards();
@@ -510,6 +986,18 @@ int main() {
     test_beam_search_identical_sequence_order_invariance();
     test_beam_search_goal_preservation_across_depths();
 
-    std::cout << "All Milestone 5E.1 & 5E.2A planning tests passed successfully!" << std::endl;
+    // 5E.2B tests
+    test_scoring_validation_and_objective();
+    test_strict_weak_ordering_axioms();
+    test_confidence_tracking();
+    test_mock_scenario_a_short_vs_long_route();
+    test_mock_scenario_b_heuristic_vs_completed_goal();
+    test_mock_scenario_c_early_goal_preservation();
+    test_mock_scenario_d_tie_breaking_determinism();
+    test_mock_scenario_e_no_reachable_goal_fallback();
+    test_mock_scenario_f_hallucination_obstacle_isolation();
+    test_exhaustive_vs_beam_search_agreement();
+
+    std::cout << "All Milestone 5E.1, 5E.2A, and 5E.2B planning tests passed successfully!" << std::endl;
     return 0;
 }

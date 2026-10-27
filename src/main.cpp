@@ -54,6 +54,8 @@ void print_info() {
               << "  spark partial-obs [--seeds S] [--steps N] [--unroll U] [--lr LR] [--episodes E] [--csv PATH]\n"
               << "  spark onestep-diag [--steps N] [--test-transitions T] [--lr LR] [--seed S] [--csv PATH]\n"
               << "  spark rollout [--checkpoint PATH] [--mode teacher-forced|open-loop|both] [--horizon H] [--episodes N] [--seed S] [--csv PATH]\n"
+              << "  spark plan-foundation\n"
+              << "  spark plan-beam [--width K] [--depth H] [--episodes N] [--checkpoint PATH]\n"
               << std::endl;
 }
 
@@ -776,6 +778,87 @@ void run_plan_foundation_cmd(int argc, char* argv[]) {
     std::cout << "\nMilestone 5E.1 planning foundation verified successfully!" << std::endl;
 }
 
+void run_plan_beam_cmd(int argc, char* argv[]) {
+    print_banner();
+    std::cout << ">>> SPARK Milestone 5E.2: Learned-Model Bounded Beam Planning <<<\n" << std::endl;
+
+    uint32_t beam_width = 4;
+    uint32_t max_depth = 4;
+    size_t num_episodes = 5;
+    std::string checkpoint_path = "checkpoints/world_model_best.spark";
+
+    for (int i = 2; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--width" && i + 1 < argc) {
+            beam_width = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--depth" && i + 1 < argc) {
+            max_depth = static_cast<uint32_t>(std::stoul(argv[++i]));
+        } else if (arg == "--episodes" && i + 1 < argc) {
+            num_episodes = std::stoul(argv[++i]);
+        } else if (arg == "--checkpoint" && i + 1 < argc) {
+            checkpoint_path = argv[++i];
+        }
+    }
+
+    std::cout << "Configuration: Beam Width K=" << beam_width
+              << ", Max Depth H=" << max_depth
+              << ", Episodes=" << num_episodes << std::endl;
+
+    // Load World Model
+    spark::SparseGraphConfig g_cfg;
+    g_cfg.num_units = 128;
+    g_cfg.fan_in = 8;
+    g_cfg.seed = 42ULL;
+    spark::NetworkConfig n_cfg;
+    n_cfg.num_units = 128;
+    n_cfg.input_dim = 55;
+    n_cfg.output_dim = 25;
+    n_cfg.alpha = 0.8f;
+    n_cfg.beta = 1.0f;
+    n_cfg.seed = 42ULL;
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+
+    bool has_ckpt = spark::MicroUnitNetwork::load_checkpoint(checkpoint_path, net);
+    if (!has_ckpt) {
+        std::cout << "Warning: Checkpoint " << checkpoint_path << " not found, evaluating with fresh model." << std::endl;
+    } else {
+        std::cout << "Loaded world model from: " << checkpoint_path << std::endl;
+    }
+
+    auto splits = spark::GridWorldEnv::generate_split_layouts(100, 20, 20, 3, 7, 7777ULL);
+    auto episodes = spark::PlanningEpisodeGenerator::generate_dataset(splits.test_layouts, 1, 42ULL, max_depth, 1);
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = beam_width;
+    cfg.max_depth = max_depth;
+
+    size_t successful_plans = 0;
+    std::cout << "\nEvaluating Bounded Beam Search Across Episodes:" << std::endl;
+    for (size_t ep_idx = 0; ep_idx < std::min(num_episodes, episodes.size()); ++ep_idx) {
+        const auto& ep = episodes[ep_idx];
+        auto root = spark::PlanningEngine::create_cold_start_root(ep.start_pos, ep.goal_pos, 128, max_depth, cfg.score_cfg);
+        auto res = spark::PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+
+        std::cout << "  Episode " << ep_idx + 1 << ": Start=(" << (ep.start_pos/5) << "," << (ep.start_pos%5) << ")"
+                  << " -> Goal=(" << (ep.goal_pos/5) << "," << (ep.goal_pos%5) << ")"
+                  << " | Ref BFS: " << ep.shortest_path_length << " steps\n";
+        std::cout << "    Plan Found: " << res.best_plan.size() << " steps (";
+        for (auto a : res.best_plan) std::cout << spark::action_name(a) << " ";
+        std::cout << ") | Goal Reached: " << (res.goal_reached ? "YES" : "NO")
+                  << " | Final Pos: (" << (res.predicted_final_position/5) << "," << (res.predicted_final_position%5) << ")"
+                  << " | Score: " << std::fixed << std::setprecision(2) << res.best_node.score
+                  << " | Mean Conf: " << std::setprecision(1) << (res.best_node.mean_step_confidence * 100.0f) << "%"
+                  << " | Expanded: " << res.nodes_expanded
+                  << " | Time: " << std::setprecision(2) << res.search_runtime_ms << " ms\n";
+
+        if (res.goal_reached) successful_plans++;
+    }
+
+    std::cout << "\nEvaluation Summary: " << successful_plans << "/" << std::min(num_episodes, episodes.size())
+              << " (" << (static_cast<float>(successful_plans) / std::min(num_episodes, episodes.size()) * 100.0f)
+              << "%) goals reached in model imagination." << std::endl;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         print_info();
@@ -813,6 +896,8 @@ int main(int argc, char* argv[]) {
         run_rollout_cmd(argc, argv);
     } else if (cmd == "plan-foundation") {
         run_plan_foundation_cmd(argc, argv);
+    } else if (cmd == "plan-beam") {
+        run_plan_beam_cmd(argc, argv);
     } else {
         std::cerr << "Unknown command: '" << cmd << "'\n"
                   << "Run 'spark info' for available commands." << std::endl;
