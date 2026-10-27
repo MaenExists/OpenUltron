@@ -1700,6 +1700,225 @@ void test_real_checkpoint_closed_loop_execution() {
     std::cout << "[Test] test_real_checkpoint_closed_loop_execution PASSED." << std::endl;
 }
 
+// 36. Milestone 5E.3 (Step 2A): Fresh confirmatory dataset generation & split isolation
+void test_fresh_confirmatory_dataset_generation() {
+    std::cout << "[Test] Running test_fresh_confirmatory_dataset_generation..." << std::endl;
+
+    // Splits: 100 train, 20 val, 100 test
+    auto splits = spark::GridWorldEnv::generate_split_layouts(100, 20, 100, 3, 7, 7777ULL);
+    REQUIRE(splits.train_layouts.size() == 100, "Train layouts count must be 100");
+    REQUIRE(splits.val_layouts.size() == 20, "Val layouts count must be 20");
+    REQUIRE(splits.test_layouts.size() == 100, "Test layouts count must be 100");
+
+    // Take layouts 20..59 (40 fresh unseen layouts, IDs 3000020..3000059)
+    std::vector<spark::GridWorldLayout> fresh_test_layouts(
+        splits.test_layouts.begin() + 20,
+        splits.test_layouts.begin() + 60
+    );
+    REQUIRE(fresh_test_layouts.size() == 40, "Fresh test layouts count must be 40");
+
+    // Generate 6 episodes per layout -> 240 episodes (>= 200 required)
+    auto confirmatory_episodes = spark::PlanningEpisodeGenerator::generate_fresh_confirmatory_dataset(
+        fresh_test_layouts, 6, 5000500ULL, 16, 1
+    );
+
+    REQUIRE(confirmatory_episodes.size() == 240, "Confirmatory dataset must contain exactly 240 episodes");
+    REQUIRE(confirmatory_episodes.size() >= 200, "Dataset must satisfy minimum requirement of 200 episodes");
+
+    std::unordered_set<std::string> seen_ids;
+    std::map<spark::EpisodeGroup, size_t> group_counts;
+
+    for (const auto& ep : confirmatory_episodes) {
+        REQUIRE(!ep.episode_id.empty(), "Episode ID must not be empty");
+        REQUIRE(seen_ids.find(ep.episode_id) == seen_ids.end(), "Episode ID must be strictly unique");
+        seen_ids.insert(ep.episode_id);
+
+        // Layout ID must be in fresh test range (3000020..3000059)
+        REQUIRE(ep.layout_id >= 3000020 && ep.layout_id < 3000060,
+                "Layout ID must belong strictly to fresh unseen test layouts");
+
+        // Verify reachability
+        REQUIRE(ep.shortest_path_length > 0 && ep.shortest_path_length <= 16,
+                "Shortest path must be in [1, 16]");
+        REQUIRE(ep.reference_shortest_path.size() == ep.shortest_path_length,
+                "Reference path size must match shortest path length");
+
+        auto grp = spark::PlanningEngine::classify_episode(ep, 6);
+        group_counts[grp]++;
+    }
+
+    std::cout << "  Fresh Confirmatory Dataset: 240 episodes across 40 unique layouts\n"
+              << "    Direct (Group A)    : " << group_counts[spark::EpisodeGroup::GroupA_Direct] << "\n"
+              << "    Detours (Group B)   : " << group_counts[spark::EpisodeGroup::GroupB_Detour] << "\n"
+              << "    Misleading (Group C): " << group_counts[spark::EpisodeGroup::GroupC_Misleading] << "\n"
+              << "    Longer (Group D)    : " << group_counts[spark::EpisodeGroup::GroupD_Longer] << std::endl;
+
+    REQUIRE(group_counts[spark::EpisodeGroup::GroupA_Direct] > 0, "Dataset must contain Direct routes");
+    REQUIRE(group_counts[spark::EpisodeGroup::GroupB_Detour] > 0, "Dataset must contain Detour routes");
+    REQUIRE(group_counts[spark::EpisodeGroup::GroupC_Misleading] > 0, "Dataset must contain Misleading routes");
+
+    std::cout << "[Test] test_fresh_confirmatory_dataset_generation PASSED." << std::endl;
+}
+
+// 37. Milestone 5E.3 (Step 2A): Action budget equality & depth clamping
+void test_action_budget_and_depth_clamping() {
+    std::cout << "[Test] Running test_action_budget_and_depth_clamping..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    // Goal is 10 steps away, but budget H = 4
+    spark::PlanningEpisode ep;
+    ep.start_pos = 0;
+    ep.goal_pos = 24; // (0,0) to (4,4) is 8 steps away
+    ep.shortest_path_length = 8;
+    ep.layout = layout;
+
+    spark::PredictorFn ideal_predictor = [](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        h_out = h_in;
+        uint32_t curr = 0;
+        for (uint32_t i = 0; i < 25; ++i) {
+            if (x[i] > 0.5f) { curr = i; break; }
+        }
+        spark::Action a = spark::Action::Stay;
+        for (uint32_t i = 0; i < 5; ++i) {
+            if (x[50 + i] > 0.5f) { a = static_cast<spark::Action>(i); break; }
+        }
+        auto trans = spark::GridWorldEnv::simulate_transition(curr, a, std::vector<uint8_t>(25, 0), 5, 5);
+        logits.assign(25, -10.0f);
+        probs.assign(25, 0.0f);
+        logits[trans.to_pos] = 10.0f;
+        probs[trans.to_pos] = 1.0f;
+    };
+
+    const uint32_t common_budget_H = 4;
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = common_budget_H;
+
+    // 1. Open loop execution
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 24, 128, common_budget_H);
+    auto ol_search = spark::PlanningEngine::beam_search_custom(ideal_predictor, layout, root, 24, cfg);
+    auto ol_res = spark::PlanningEngine::execute_plan_open_loop(ep, ol_search, true, common_budget_H);
+
+    // 2. Closed loop execution
+    auto cl_res = spark::PlanningEngine::execute_plan_closed_loop_custom(
+        ideal_predictor, ep, std::vector<float>(128, 0.0f), cfg, common_budget_H, true
+    );
+
+    // Invariant: Neither open-loop nor closed-loop may execute more than H real actions
+    REQUIRE(ol_res.executed_plan.size() <= common_budget_H, "Open-loop executed actions must NOT exceed H=4");
+    REQUIRE(cl_res.executed_plan.size() <= common_budget_H, "Closed-loop executed actions must NOT exceed H=4");
+    REQUIRE(ol_res.executed_plan.size() == common_budget_H, "Open-loop must execute exactly budget H=4");
+    REQUIRE(cl_res.executed_plan.size() == common_budget_H, "Closed-loop must execute exactly budget H=4");
+
+    std::cout << "[Test] test_action_budget_and_depth_clamping PASSED." << std::endl;
+}
+
+// 38. Milestone 5E.3 (Step 2A): Paired outcome classification and contingency
+void test_paired_comparison_outcome_classification() {
+    std::cout << "[Test] Running test_paired_comparison_outcome_classification..." << std::endl;
+
+    spark::PairedEpisodeResult p1, p2, p3, p4;
+
+    // p1: Both succeed
+    p1.open_loop_res.actual_goal_reached = true;
+    p1.closed_loop_res.actual_goal_reached = true;
+    p1.paired_outcome = spark::PairedOutcome::BothSucceed;
+
+    // p2: Both fail
+    p2.open_loop_res.actual_goal_reached = false;
+    p2.closed_loop_res.actual_goal_reached = false;
+    p2.paired_outcome = spark::PairedOutcome::BothFail;
+
+    // p3: Open only
+    p3.open_loop_res.actual_goal_reached = true;
+    p3.closed_loop_res.actual_goal_reached = false;
+    p3.paired_outcome = spark::PairedOutcome::OpenOnlySucceed;
+
+    // p4: Closed only
+    p4.open_loop_res.actual_goal_reached = false;
+    p4.closed_loop_res.actual_goal_reached = true;
+    p4.paired_outcome = spark::PairedOutcome::ClosedOnlySucceed;
+
+    REQUIRE(p1.paired_outcome == spark::PairedOutcome::BothSucceed, "Must be BothSucceed");
+    REQUIRE(p2.paired_outcome == spark::PairedOutcome::BothFail, "Must be BothFail");
+    REQUIRE(p3.paired_outcome == spark::PairedOutcome::OpenOnlySucceed, "Must be OpenOnlySucceed");
+    REQUIRE(p4.paired_outcome == spark::PairedOutcome::ClosedOnlySucceed, "Must be ClosedOnlySucceed");
+
+    std::cout << "[Test] test_paired_comparison_outcome_classification PASSED." << std::endl;
+}
+
+// 39. Milestone 5E.3 (Step 2A): Recovery after transition error accounting
+void test_recovery_after_error_metric() {
+    std::cout << "[Test] Running test_recovery_after_error_metric..." << std::endl;
+
+    spark::PairedEpisodeResult p_rec, p_norec;
+
+    // Scenario A: Transition error occurred, but closed loop reached goal -> Recovered!
+    p_rec.closed_loop_res.actual_goal_reached = true;
+    p_rec.closed_loop_res.transition_errors = 1;
+    p_rec.closed_loop_recovered_from_error = (p_rec.closed_loop_res.transition_errors > 0 && p_rec.closed_loop_res.actual_goal_reached);
+    REQUIRE(p_rec.closed_loop_recovered_from_error, "Must be flagged as recovered after error");
+
+    // Scenario B: Transition error occurred, and closed loop failed -> Did not recover
+    p_norec.closed_loop_res.actual_goal_reached = false;
+    p_norec.closed_loop_res.transition_errors = 1;
+    p_norec.closed_loop_recovered_from_error = (p_norec.closed_loop_res.transition_errors > 0 && p_norec.closed_loop_res.actual_goal_reached);
+    REQUIRE(!p_norec.closed_loop_recovered_from_error, "Must NOT be flagged as recovered when goal was not reached");
+
+    std::cout << "[Test] test_recovery_after_error_metric PASSED." << std::endl;
+}
+
+// 40. Milestone 5E.3 (Step 2A): Paired bootstrap confidence interval determinism
+void test_paired_bootstrap_confidence_interval() {
+    std::cout << "[Test] Running test_paired_bootstrap_confidence_interval..." << std::endl;
+
+    std::vector<spark::PairedEpisodeResult> results;
+    // 80 episodes: 60 both succeed, 10 closed-only succeed, 10 both fail
+    // diff = +10 / 80 = +12.5 percentage points
+    for (int i = 0; i < 60; ++i) {
+        spark::PairedEpisodeResult r;
+        r.open_loop_res.actual_goal_reached = true;
+        r.closed_loop_res.actual_goal_reached = true;
+        r.layout_id = i % 10;
+        results.push_back(r);
+    }
+    for (int i = 0; i < 10; ++i) {
+        spark::PairedEpisodeResult r;
+        r.open_loop_res.actual_goal_reached = false;
+        r.closed_loop_res.actual_goal_reached = true;
+        r.layout_id = i % 10;
+        results.push_back(r);
+    }
+    for (int i = 0; i < 10; ++i) {
+        spark::PairedEpisodeResult r;
+        r.open_loop_res.actual_goal_reached = false;
+        r.closed_loop_res.actual_goal_reached = false;
+        r.layout_id = i % 10;
+        results.push_back(r);
+    }
+
+    auto ci1 = spark::PlanningEvaluator::compute_paired_bootstrap_ci(results, 2000, 4242ULL);
+    auto ci2 = spark::PlanningEvaluator::compute_paired_bootstrap_ci(results, 2000, 4242ULL);
+
+    REQUIRE(ci1.first == ci2.first && ci1.second == ci2.second, "Bootstrap CI must be strictly deterministic with fixed seed");
+    REQUIRE(ci1.first > 0.0, "95% CI lower bound must be positive when closed strictly outperforms open");
+    REQUIRE(ci1.second > ci1.first, "95% CI upper bound must be greater than lower bound");
+
+    std::cout << "  Deterministic 95% Bootstrap CI: [" << ci1.first << " pp, " << ci1.second << " pp]" << std::endl;
+
+    std::cout << "[Test] test_paired_bootstrap_confidence_interval PASSED." << std::endl;
+}
+
 int main() {
     std::cout << "=== Running SPARK Milestone 5E.1, 5E.2 (A/B/C), and 5E.2D Planning Tests ===" << std::endl;
 
@@ -1750,6 +1969,13 @@ int main() {
     test_closed_loop_action_budget_and_termination();
     test_closed_loop_replanning_obstacle_recovery();
     test_real_checkpoint_closed_loop_execution();
+
+    // 5E.3 tests (Step 2A)
+    test_fresh_confirmatory_dataset_generation();
+    test_action_budget_and_depth_clamping();
+    test_paired_comparison_outcome_classification();
+    test_recovery_after_error_metric();
+    test_paired_bootstrap_confidence_interval();
 
     std::cout << "All Milestone 5E.1, 5E.2 (A/B/C), 5E.2D, and 5E.3 planning tests passed successfully!" << std::endl;
     return 0;

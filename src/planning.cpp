@@ -126,7 +126,7 @@ BFSSolver::BFSResult BFSSolver::find_shortest_path(
 // ============================================================================
 std::string PlanningEpisode::to_string() const {
     std::ostringstream ss;
-    ss << "Episode(seed=" << seed << ", layout_id=" << layout_id
+    ss << "Episode(id=" << episode_id << ", seed=" << seed << ", layout_id=" << layout_id
        << ", start=(" << (start_pos / layout.width) << "," << (start_pos % layout.width) << ")"
        << ", goal=(" << (goal_pos / layout.width) << "," << (goal_pos % layout.width) << ")"
        << ", shortest_path=" << shortest_path_length << ")";
@@ -173,6 +173,8 @@ PlanningEpisode PlanningEpisodeGenerator::generate_reachable_episode(
             ep.seed = seed;
             ep.shortest_path_length = bfs.shortest_path_length;
             ep.reference_shortest_path = std::move(bfs.shortest_path);
+            ep.episode_id = "ep_L" + std::to_string(layout.layout_id) + "_s" + std::to_string(start_pos)
+                          + "_g" + std::to_string(goal_pos) + "_" + std::to_string(seed);
             return ep;
         }
     }
@@ -194,6 +196,8 @@ PlanningEpisode PlanningEpisodeGenerator::generate_reachable_episode(
                 ep.seed = seed;
                 ep.shortest_path_length = bfs.shortest_path_length;
                 ep.reference_shortest_path = std::move(bfs.shortest_path);
+                ep.episode_id = "ep_L" + std::to_string(layout.layout_id) + "_s" + std::to_string(start_pos)
+                              + "_g" + std::to_string(goal_pos) + "_" + std::to_string(seed);
                 return ep;
             }
         }
@@ -217,6 +221,36 @@ std::vector<PlanningEpisode> PlanningEpisodeGenerator::generate_dataset(
         for (size_t ep_idx = 0; ep_idx < episodes_per_layout; ++ep_idx) {
             uint64_t ep_seed = base_seed + l_idx * 1000003ULL + ep_idx * 7919ULL;
             auto ep = generate_reachable_episode(layout, ep_seed, max_steps, min_path_length);
+            ep.episode_id = "ep_L" + std::to_string(layout.layout_id) + "_s" + std::to_string(ep.start_pos)
+                          + "_g" + std::to_string(ep.goal_pos) + "_" + std::to_string(ep_idx);
+            dataset.push_back(std::move(ep));
+        }
+    }
+
+    return dataset;
+}
+
+std::vector<PlanningEpisode> PlanningEpisodeGenerator::generate_fresh_confirmatory_dataset(
+    const std::vector<GridWorldLayout>& fresh_test_layouts,
+    size_t episodes_per_layout,
+    uint64_t base_seed,
+    uint32_t max_steps,
+    uint32_t min_path_length
+) {
+    if (fresh_test_layouts.empty()) {
+        throw std::invalid_argument("fresh_test_layouts must not be empty");
+    }
+
+    std::vector<PlanningEpisode> dataset;
+    dataset.reserve(fresh_test_layouts.size() * episodes_per_layout);
+
+    for (size_t l_idx = 0; l_idx < fresh_test_layouts.size(); ++l_idx) {
+        const auto& layout = fresh_test_layouts[l_idx];
+        for (size_t ep_idx = 0; ep_idx < episodes_per_layout; ++ep_idx) {
+            uint64_t ep_seed = base_seed + l_idx * 1000003ULL + ep_idx * 7919ULL;
+            auto ep = generate_reachable_episode(layout, ep_seed, max_steps, min_path_length);
+            ep.episode_id = "conf_ep_L" + std::to_string(layout.layout_id) + "_s" + std::to_string(ep.start_pos)
+                          + "_g" + std::to_string(ep.goal_pos) + "_" + std::to_string(ep_idx);
             dataset.push_back(std::move(ep));
         }
     }
@@ -831,11 +865,11 @@ EpisodeGroup PlanningEngine::classify_episode(const PlanningEpisode& episode, ui
 PlanExecutionResult PlanningEngine::execute_plan_open_loop(
     const PlanningEpisode& episode,
     const PlanningSearchResult& search_res,
-    bool cold_start
+    bool cold_start,
+    uint32_t max_executed_steps
 ) {
     PlanExecutionResult res;
     res.episode = episode;
-    res.executed_plan = search_res.best_plan;
     res.predicted_trajectory = search_res.predicted_trajectory;
     res.predicted_goal_reached = search_res.goal_reached;
     res.nodes_expanded = search_res.nodes_expanded;
@@ -845,6 +879,16 @@ PlanExecutionResult PlanningEngine::execute_plan_open_loop(
     res.final_score = search_res.best_node.score;
     res.cold_start = cold_start;
     res.group = classify_episode(episode, search_res.max_depth);
+    res.is_closed_loop = false;
+
+    // Check if open-loop plan is incomplete (shorter than max_depth when goal not reached)
+    if (search_res.best_plan.size() < search_res.max_depth && !search_res.goal_reached) {
+        res.open_loop_incomplete = true;
+    }
+
+    // Action budget enforcement: execute at most max_executed_steps
+    size_t plan_steps = std::min(static_cast<size_t>(max_executed_steps), search_res.best_plan.size());
+    res.executed_plan.assign(search_res.best_plan.begin(), search_res.best_plan.begin() + plan_steps);
 
     res.actual_trajectory.push_back(episode.start_pos);
     uint32_t curr_pos = episode.start_pos;
@@ -852,8 +896,8 @@ PlanExecutionResult PlanningEngine::execute_plan_open_loop(
     bool had_discrepancy = false;
     bool hit_obstacle_hallucination = false;
 
-    for (size_t t = 0; t < search_res.best_plan.size(); ++t) {
-        Action a = search_res.best_plan[t];
+    for (size_t t = 0; t < plan_steps; ++t) {
+        Action a = res.executed_plan[t];
         auto trans = GridWorldEnv::simulate_transition(
             curr_pos, a, episode.layout.obstacles, episode.layout.width, episode.layout.height
         );
@@ -880,7 +924,7 @@ PlanExecutionResult PlanningEngine::execute_plan_open_loop(
     res.predicted_actual_agreement = (res.predicted_goal_reached == res.actual_goal_reached);
 
     if (res.actual_goal_reached && episode.shortest_path_length > 0) {
-        res.path_efficiency = static_cast<float>(search_res.best_plan.size()) / static_cast<float>(episode.shortest_path_length);
+        res.path_efficiency = static_cast<float>(res.executed_plan.size()) / static_cast<float>(episode.shortest_path_length);
     } else {
         res.path_efficiency = 0.0f;
     }
@@ -888,7 +932,7 @@ PlanExecutionResult PlanningEngine::execute_plan_open_loop(
     // Failure categorization
     if (res.actual_goal_reached) {
         res.failure_category = FailureCategory::None;
-    } else if (episode.shortest_path_length > search_res.max_depth) {
+    } else if (episode.shortest_path_length > max_executed_steps) {
         res.failure_category = FailureCategory::DepthInsufficient;
     } else if (res.predicted_goal_reached && !res.actual_goal_reached) {
         if (hit_obstacle_hallucination) {
@@ -932,6 +976,15 @@ PlanExecutionResult PlanningEngine::execute_plan_closed_loop_custom(
     res.peak_memory_bytes = (config.beam_width * 5 + 1) * node_size;
 
     while (curr_pos != episode.goal_pos && res.executed_plan.size() < max_executed_steps) {
+        uint32_t remaining_budget = max_executed_steps - static_cast<uint32_t>(res.executed_plan.size());
+        if (remaining_budget == 0) {
+            break;
+        }
+
+        // At each closed-loop decision, bound planning depth by remaining real-action budget
+        BeamSearchConfig step_config = config;
+        step_config.max_depth = std::min(config.max_depth, remaining_budget);
+
         // 1. Obtain current permitted observation (curr_pos, episode.layout)
         // 2. Initialize search root from current observation & live recurrent state
         PlanningNode root;
@@ -942,11 +995,15 @@ PlanExecutionResult PlanningEngine::execute_plan_closed_loop_custom(
         root.goal_reached = (curr_pos == episode.goal_pos);
         root.manhattan_to_goal = compute_manhattan_distance(curr_pos, episode.goal_pos, episode.layout.width);
         root.score = PlanningScorer::compute_score(
-            curr_pos, episode.goal_pos, 0, config.max_depth, root.goal_reached, config.score_cfg, episode.layout.width
+            curr_pos, episode.goal_pos, 0, step_config.max_depth, root.goal_reached, config.score_cfg, episode.layout.width
         );
 
+        // Peak working memory estimate for current search step
+        size_t step_peak_mem = (step_config.beam_width * 5 + 1) * node_size;
+        res.peak_memory_bytes = std::max(res.peak_memory_bytes, step_peak_mem);
+
         // 3. Execute bounded beam search using world model predictor
-        auto search_res = beam_search_custom(predictor, episode.layout, root, episode.goal_pos, config);
+        auto search_res = beam_search_custom(predictor, episode.layout, root, episode.goal_pos, step_config);
         res.nodes_expanded += search_res.nodes_expanded;
         res.model_evaluations += search_res.model_evaluations;
         res.replan_count++;
@@ -1372,6 +1429,333 @@ void PlanningEvaluator::run_milestone5e2d_benchmark(
 
     csv.close();
     std::cout << "\nResults exported successfully to: " << csv_path << std::endl;
+}
+
+// ============================================================================
+// 8. Paired Benchmark Implementation (Milestone 5E.3 Step 2A)
+// ============================================================================
+void PairedBenchmarkSummary::print_summary(const std::string& title) const {
+    std::cout << "\n=======================================================\n"
+              << " " << title << "\n"
+              << "=======================================================\n";
+    std::cout << " Configuration               : " << configuration_name << "\n";
+    std::cout << " Beam Width (K)              : " << beam_width << "\n";
+    std::cout << " Horizon / Action Budget (H) : " << horizon << "\n";
+    std::cout << " Initialization              : " << (cold_start ? "ColdStart (h(0)=0)" : "WarmedUp (h(1))") << "\n";
+    std::cout << " Total Episodes Evaluated    : " << total_episodes << "\n";
+    std::cout << " Eligible Episodes (L <= H)  : " << eligible_episodes << "\n";
+    std::cout << " Longer Episodes (L > H)     : " << longer_episodes << "\n";
+    std::cout << " Unique Layouts              : " << total_unique_layouts << "\n";
+    std::cout << "-------------------------------------------------------\n";
+    std::cout << " Open-Loop Success Rate      : " << open_loop_successes << "/" << eligible_episodes
+              << " (" << std::fixed << std::setprecision(2) << open_loop_success_rate << "%)\n";
+    std::cout << " Closed-Loop Success Rate    : " << closed_loop_successes << "/" << eligible_episodes
+              << " (" << std::setprecision(2) << closed_loop_success_rate << "%)\n";
+    std::cout << " Delta (Closed - Open)       : " << (delta_percentage_points >= 0 ? "+" : "")
+              << std::setprecision(2) << delta_percentage_points << " pp\n";
+    std::cout << " Paired Bootstrap 95% CI     : [" << std::setprecision(2) << delta_ci_lower
+              << " pp, " << delta_ci_upper << " pp]\n";
+    std::cout << " Clustered Layout 95% CI     : [" << std::setprecision(2) << clustered_ci_lower
+              << " pp, " << clustered_ci_upper << " pp]\n";
+    std::cout << "-------------------------------------------------------\n";
+    std::cout << " Paired Outcomes (Eligible):\n";
+    std::cout << "   Both Succeeded            : " << both_succeed
+              << " (" << (eligible_episodes > 0 ? (100.0 * both_succeed / eligible_episodes) : 0.0) << "%)\n";
+    std::cout << "   Both Failed               : " << both_fail
+              << " (" << (eligible_episodes > 0 ? (100.0 * both_fail / eligible_episodes) : 0.0) << "%)\n";
+    std::cout << "   Only Closed-Loop Succeeded: " << closed_only_succeed
+              << " (" << (eligible_episodes > 0 ? (100.0 * closed_only_succeed / eligible_episodes) : 0.0) << "%)\n";
+    std::cout << "   Only Open-Loop Succeeded  : " << open_only_succeed
+              << " (" << (eligible_episodes > 0 ? (100.0 * open_only_succeed / eligible_episodes) : 0.0) << "%)\n";
+    std::cout << "-------------------------------------------------------\n";
+    std::cout << " Computational Cost & Dynamics:\n";
+    std::cout << "   Open-Loop Mean Latency    : " << std::setprecision(2) << open_loop_mean_runtime_ms << " ms\n";
+    std::cout << "   Closed-Loop Mean Latency  : " << std::setprecision(2) << closed_loop_mean_runtime_ms << " ms ("
+              << (open_loop_mean_runtime_ms > 0 ? closed_loop_mean_runtime_ms / open_loop_mean_runtime_ms : 0.0) << "x)\n";
+    std::cout << "   Open-Loop Total Evals     : " << open_loop_model_evaluations << "\n";
+    std::cout << "   Closed-Loop Total Evals   : " << closed_loop_model_evaluations << " ("
+              << (open_loop_model_evaluations > 0 ? (double)closed_loop_model_evaluations / open_loop_model_evaluations : 0.0) << "x)\n";
+    std::cout << "   Closed-Loop Total Replans : " << closed_loop_total_replans << "\n";
+    std::cout << "   Transition Errors (1-step): " << closed_loop_transition_errors << "\n";
+    std::cout << "   Recovery After Error      : " << closed_loop_recoveries << "/" << closed_loop_recovery_opportunities
+              << " (" << std::setprecision(1) << recovery_rate << "%)\n";
+    std::cout << "   Mean Path Efficiency (OL) : " << std::setprecision(3) << open_loop_mean_efficiency << "\n";
+    std::cout << "   Mean Path Efficiency (CL) : " << std::setprecision(3) << closed_loop_mean_efficiency << "\n";
+    std::cout << "-------------------------------------------------------\n";
+    std::cout << " Eligible Performance by Episode Group:\n";
+    const std::vector<EpisodeGroup> grps = {
+        EpisodeGroup::GroupA_Direct,
+        EpisodeGroup::GroupB_Detour,
+        EpisodeGroup::GroupC_Misleading
+    };
+    for (auto g : grps) {
+        size_t total_g = group_eligible_totals.count(g) ? group_eligible_totals.at(g) : 0;
+        size_t o_succ = group_open_success.count(g) ? group_open_success.at(g) : 0;
+        size_t c_succ = group_closed_success.count(g) ? group_closed_success.at(g) : 0;
+        double o_rate = total_g > 0 ? (100.0 * o_succ / total_g) : 0.0;
+        double c_rate = total_g > 0 ? (100.0 * c_succ / total_g) : 0.0;
+        std::cout << "   " << std::left << std::setw(24) << episode_group_name(g)
+                  << ": Open " << std::right << std::setw(3) << o_succ << "/" << std::setw(3) << total_g
+                  << " (" << std::fixed << std::setprecision(1) << o_rate << "%) | Closed "
+                  << std::setw(3) << c_succ << "/" << std::setw(3) << total_g
+                  << " (" << std::setprecision(1) << c_rate << "%)\n";
+    }
+    std::cout << "=======================================================\n";
+}
+
+std::pair<double, double> PlanningEvaluator::compute_paired_bootstrap_ci(
+    const std::vector<PairedEpisodeResult>& eligible_results,
+    size_t num_bootstraps,
+    uint64_t seed
+) {
+    if (eligible_results.empty() || num_bootstraps == 0) {
+        return {0.0, 0.0};
+    }
+
+    size_t n = eligible_results.size();
+    std::vector<double> diffs(n);
+    for (size_t i = 0; i < n; ++i) {
+        double y_closed = eligible_results[i].closed_loop_res.actual_goal_reached ? 1.0 : 0.0;
+        double y_open = eligible_results[i].open_loop_res.actual_goal_reached ? 1.0 : 0.0;
+        diffs[i] = y_closed - y_open;
+    }
+
+    Random rng(seed);
+    std::vector<double> boot_means(num_bootstraps);
+
+    for (size_t b = 0; b < num_bootstraps; ++b) {
+        double sum = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            size_t idx = rng.next_u64() % n;
+            sum += diffs[idx];
+        }
+        boot_means[b] = (sum / static_cast<double>(n)) * 100.0; // in percentage points
+    }
+
+    std::sort(boot_means.begin(), boot_means.end());
+
+    size_t idx_lower = static_cast<size_t>(0.025 * static_cast<double>(num_bootstraps));
+    size_t idx_upper = static_cast<size_t>(0.975 * static_cast<double>(num_bootstraps));
+    if (idx_upper >= num_bootstraps) idx_upper = num_bootstraps - 1;
+
+    return {boot_means[idx_lower], boot_means[idx_upper]};
+}
+
+std::pair<double, double> PlanningEvaluator::compute_layout_clustered_bootstrap_ci(
+    const std::vector<PairedEpisodeResult>& eligible_results,
+    size_t num_bootstraps,
+    uint64_t seed
+) {
+    if (eligible_results.empty() || num_bootstraps == 0) {
+        return {0.0, 0.0};
+    }
+
+    // Cluster differences by layout_id
+    std::map<uint64_t, std::vector<double>> layout_clusters;
+    for (const auto& r : eligible_results) {
+        double y_closed = r.closed_loop_res.actual_goal_reached ? 1.0 : 0.0;
+        double y_open = r.open_loop_res.actual_goal_reached ? 1.0 : 0.0;
+        layout_clusters[r.layout_id].push_back(y_closed - y_open);
+    }
+
+    std::vector<uint64_t> layout_ids;
+    layout_ids.reserve(layout_clusters.size());
+    for (const auto& kv : layout_clusters) {
+        layout_ids.push_back(kv.first);
+    }
+
+    size_t num_clusters = layout_ids.size();
+    if (num_clusters == 0) return {0.0, 0.0};
+
+    Random rng(seed);
+    std::vector<double> boot_means(num_bootstraps);
+
+    for (size_t b = 0; b < num_bootstraps; ++b) {
+        double sum = 0.0;
+        size_t count = 0;
+        for (size_t c = 0; c < num_clusters; ++c) {
+            size_t idx = rng.next_u64() % num_clusters;
+            uint64_t lid = layout_ids[idx];
+            const auto& vals = layout_clusters[lid];
+            for (double v : vals) {
+                sum += v;
+                count++;
+            }
+        }
+        boot_means[b] = (count > 0 ? (sum / static_cast<double>(count)) : 0.0) * 100.0;
+    }
+
+    std::sort(boot_means.begin(), boot_means.end());
+
+    size_t idx_lower = static_cast<size_t>(0.025 * static_cast<double>(num_bootstraps));
+    size_t idx_upper = static_cast<size_t>(0.975 * static_cast<double>(num_bootstraps));
+    if (idx_upper >= num_bootstraps) idx_upper = num_bootstraps - 1;
+
+    return {boot_means[idx_lower], boot_means[idx_upper]};
+}
+
+PairedBenchmarkSummary PlanningEvaluator::evaluate_paired_comparison(
+    const MicroUnitNetwork& net,
+    const std::vector<PlanningEpisode>& episodes,
+    uint32_t beam_width,
+    uint32_t horizon,
+    bool cold_start,
+    const PlanningScoreConfig& score_cfg,
+    std::vector<PairedEpisodeResult>* out_paired_episodes
+) {
+    PairedBenchmarkSummary summary;
+    summary.beam_width = beam_width;
+    summary.horizon = horizon;
+    summary.cold_start = cold_start;
+    summary.total_episodes = episodes.size();
+
+    std::ostringstream ss;
+    ss << "Beam_K" << beam_width << "_H" << horizon << "_" << (cold_start ? "ColdStart" : "WarmedUp");
+    summary.configuration_name = ss.str();
+
+    BeamSearchConfig cfg;
+    cfg.beam_width = beam_width;
+    cfg.max_depth = horizon;
+    cfg.score_cfg = score_cfg;
+    cfg.return_first_goal = false;
+
+    std::unordered_set<uint64_t> unique_layouts;
+    std::vector<PairedEpisodeResult> eligible_results;
+    double sum_ol_eff = 0.0, sum_cl_eff = 0.0;
+    size_t ol_eff_cnt = 0, cl_eff_cnt = 0;
+
+    for (const auto& ep : episodes) {
+        unique_layouts.insert(ep.layout_id);
+
+        // 1. Run Open-Loop Search and Execution
+        PlanningSearchResult ol_search;
+        if (cold_start) {
+            auto root = PlanningEngine::create_cold_start_root(ep.start_pos, ep.goal_pos, 128, horizon, score_cfg);
+            ol_search = PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+        } else {
+            std::vector<float> x_prior;
+            PlanningEngine::encode_model_input(ep.start_pos, ep.layout, Action::Stay, x_prior);
+            std::vector<float> h_out, logits, probs;
+            net.forward_step_branching(std::vector<float>(128, 0.0f), x_prior, h_out, logits, probs, ReadoutMode::Softmax);
+            auto root = PlanningEngine::create_warmed_up_root(ep.start_pos, ep.goal_pos, h_out, horizon, score_cfg);
+            ol_search = PlanningEngine::beam_search(net, ep.layout, root, ep.goal_pos, cfg);
+        }
+        // Action budget H strictly enforced in open loop
+        auto ol_res = PlanningEngine::execute_plan_open_loop(ep, ol_search, cold_start, horizon);
+
+        // 2. Run Closed-Loop Execution (with action budget H strictly enforced and depth bounded by remaining budget)
+        auto cl_res = PlanningEngine::execute_plan_closed_loop(net, ep, cfg, horizon, cold_start);
+
+        // 3. Pair results
+        PairedEpisodeResult paired;
+        paired.episode_id = ep.episode_id;
+        paired.layout_id = ep.layout_id;
+        paired.start_pos = ep.start_pos;
+        paired.goal_pos = ep.goal_pos;
+        paired.oracle_path_length = ep.shortest_path_length;
+        paired.group = ol_res.group;
+        paired.is_eligible = (ep.shortest_path_length <= horizon);
+        paired.open_loop_res = ol_res;
+        paired.closed_loop_res = cl_res;
+
+        bool ol_succ = ol_res.actual_goal_reached;
+        bool cl_succ = cl_res.actual_goal_reached;
+
+        if (ol_succ && cl_succ) {
+            paired.paired_outcome = PairedOutcome::BothSucceed;
+        } else if (!ol_succ && !cl_succ) {
+            paired.paired_outcome = PairedOutcome::BothFail;
+        } else if (ol_succ && !cl_succ) {
+            paired.paired_outcome = PairedOutcome::OpenOnlySucceed;
+        } else {
+            paired.paired_outcome = PairedOutcome::ClosedOnlySucceed;
+        }
+
+        paired.closed_loop_recovered_from_error = (cl_res.transition_errors > 0 && cl_succ);
+
+        // Accumulate resource metrics across all episodes
+        summary.open_loop_model_evaluations += ol_res.model_evaluations;
+        summary.closed_loop_model_evaluations += cl_res.model_evaluations;
+        summary.open_loop_mean_runtime_ms += ol_res.search_runtime_ms;
+        summary.closed_loop_mean_runtime_ms += cl_res.search_runtime_ms;
+        summary.open_loop_peak_memory_bytes = std::max(summary.open_loop_peak_memory_bytes, (cfg.beam_width * 5 + 1) * sizeof(PlanningNode));
+        summary.closed_loop_peak_memory_bytes = std::max(summary.closed_loop_peak_memory_bytes, cl_res.peak_memory_bytes);
+
+        summary.closed_loop_total_replans += cl_res.replan_count;
+        summary.closed_loop_transition_errors += cl_res.transition_errors;
+
+        if (paired.is_eligible) {
+            summary.eligible_episodes++;
+            eligible_results.push_back(paired);
+
+            summary.group_eligible_totals[paired.group]++;
+            if (ol_succ) {
+                summary.open_loop_successes++;
+                summary.group_open_success[paired.group]++;
+            }
+            if (cl_succ) {
+                summary.closed_loop_successes++;
+                summary.group_closed_success[paired.group]++;
+            }
+
+            if (paired.paired_outcome == PairedOutcome::BothSucceed) summary.both_succeed++;
+            else if (paired.paired_outcome == PairedOutcome::BothFail) summary.both_fail++;
+            else if (paired.paired_outcome == PairedOutcome::OpenOnlySucceed) summary.open_only_succeed++;
+            else if (paired.paired_outcome == PairedOutcome::ClosedOnlySucceed) summary.closed_only_succeed++;
+
+            if (cl_res.transition_errors > 0) {
+                summary.closed_loop_recovery_opportunities++;
+                if (paired.closed_loop_recovered_from_error) {
+                    summary.closed_loop_recoveries++;
+                }
+            }
+
+            if (ol_succ && ol_res.path_efficiency > 0.0f) {
+                sum_ol_eff += ol_res.path_efficiency;
+                ol_eff_cnt++;
+            }
+            if (cl_succ && cl_res.path_efficiency > 0.0f) {
+                sum_cl_eff += cl_res.path_efficiency;
+                cl_eff_cnt++;
+            }
+        } else {
+            summary.longer_episodes++;
+        }
+
+        if (out_paired_episodes) {
+            out_paired_episodes->push_back(std::move(paired));
+        }
+    }
+
+    summary.total_unique_layouts = unique_layouts.size();
+
+    if (summary.total_episodes > 0) {
+        summary.open_loop_mean_runtime_ms /= summary.total_episodes;
+        summary.closed_loop_mean_runtime_ms /= summary.total_episodes;
+    }
+
+    if (ol_eff_cnt > 0) summary.open_loop_mean_efficiency = sum_ol_eff / ol_eff_cnt;
+    if (cl_eff_cnt > 0) summary.closed_loop_mean_efficiency = sum_cl_eff / cl_eff_cnt;
+
+    if (summary.closed_loop_recovery_opportunities > 0) {
+        summary.recovery_rate = (100.0 * summary.closed_loop_recoveries) / summary.closed_loop_recovery_opportunities;
+    }
+
+    if (summary.eligible_episodes > 0) {
+        summary.open_loop_success_rate = (100.0 * summary.open_loop_successes) / summary.eligible_episodes;
+        summary.closed_loop_success_rate = (100.0 * summary.closed_loop_successes) / summary.eligible_episodes;
+        summary.delta_percentage_points = summary.closed_loop_success_rate - summary.open_loop_success_rate;
+
+        auto boot_ci = compute_paired_bootstrap_ci(eligible_results, 2000, 4242ULL);
+        summary.delta_ci_lower = boot_ci.first;
+        summary.delta_ci_upper = boot_ci.second;
+
+        auto clust_ci = compute_layout_clustered_bootstrap_ci(eligible_results, 2000, 4242ULL);
+        summary.clustered_ci_lower = clust_ci.first;
+        summary.clustered_ci_upper = clust_ci.second;
+    }
+
+    return summary;
 }
 
 } // namespace spark

@@ -54,6 +54,7 @@ public:
 // 2. Planning Episode Representation & Generator
 // ============================================================================
 struct PlanningEpisode {
+    std::string episode_id;
     uint32_t start_pos = 0;
     uint32_t goal_pos = 0;
     GridWorldLayout layout;
@@ -83,6 +84,17 @@ public:
         const std::vector<GridWorldLayout>& layouts,
         size_t episodes_per_layout,
         uint64_t base_seed = 42ULL,
+        uint32_t max_steps = 16,
+        uint32_t min_path_length = 1
+    );
+
+    // Generates a completely fresh, unseen confirmatory dataset (>= 200 episodes)
+    // with 0 layout overlap with train and val sets, deterministic generation,
+    // and stable episode identifiers.
+    static std::vector<PlanningEpisode> generate_fresh_confirmatory_dataset(
+        const std::vector<GridWorldLayout>& fresh_test_layouts,
+        size_t episodes_per_layout = 6,
+        uint64_t base_seed = 5000500ULL,
         uint32_t max_steps = 16,
         uint32_t min_path_length = 1
     );
@@ -243,6 +255,101 @@ struct PlanExecutionResult {
     uint32_t replan_count = 0;
     uint32_t transition_errors = 0;
     size_t peak_memory_bytes = 0;
+    bool open_loop_incomplete = false;
+};
+
+// ============================================================================
+// 5B. Paired Evaluation Data Structures (Milestone 5E.3 Step 2A)
+// ============================================================================
+enum class PairedOutcome {
+    BothSucceed,
+    BothFail,
+    OpenOnlySucceed,
+    ClosedOnlySucceed
+};
+
+inline const char* paired_outcome_name(PairedOutcome po) {
+    switch (po) {
+        case PairedOutcome::BothSucceed: return "BothSucceed";
+        case PairedOutcome::BothFail: return "BothFail";
+        case PairedOutcome::OpenOnlySucceed: return "OpenOnlySucceed";
+        case PairedOutcome::ClosedOnlySucceed: return "ClosedOnlySucceed";
+        default: return "Unknown";
+    }
+}
+
+struct PairedEpisodeResult {
+    std::string episode_id;
+    uint64_t layout_id = 0;
+    uint32_t start_pos = 0;
+    uint32_t goal_pos = 0;
+    uint32_t oracle_path_length = 0;
+    EpisodeGroup group = EpisodeGroup::GroupA_Direct;
+    bool is_eligible = false; // oracle_path_length <= common action budget (H)
+
+    PlanExecutionResult open_loop_res;
+    PlanExecutionResult closed_loop_res;
+
+    PairedOutcome paired_outcome = PairedOutcome::BothFail;
+    bool closed_loop_recovered_from_error = false;
+};
+
+struct PairedBenchmarkSummary {
+    std::string configuration_name;
+    uint32_t beam_width = 4;
+    uint32_t horizon = 4; // Action budget H
+    bool cold_start = true;
+
+    size_t total_episodes = 0;
+    size_t eligible_episodes = 0; // oracle_path_length <= H
+    size_t longer_episodes = 0;   // oracle_path_length > H
+
+    // Paired counts on eligible episodes:
+    size_t open_loop_successes = 0;
+    size_t closed_loop_successes = 0;
+    size_t both_succeed = 0;
+    size_t both_fail = 0;
+    size_t open_only_succeed = 0;
+    size_t closed_only_succeed = 0;
+
+    double open_loop_success_rate = 0.0;
+    double closed_loop_success_rate = 0.0;
+    double delta_percentage_points = 0.0; // closed - open
+
+    // Bootstrap 95% Confidence Interval for delta (percentage points)
+    double delta_ci_lower = 0.0;
+    double delta_ci_upper = 0.0;
+
+    // Layout-clustered bootstrap 95% Confidence Interval for delta
+    double clustered_ci_lower = 0.0;
+    double clustered_ci_upper = 0.0;
+
+    // Efficiency & latency
+    double open_loop_mean_efficiency = 0.0;
+    double closed_loop_mean_efficiency = 0.0;
+    double open_loop_mean_runtime_ms = 0.0;
+    double closed_loop_mean_runtime_ms = 0.0;
+    size_t open_loop_model_evaluations = 0;
+    size_t closed_loop_model_evaluations = 0;
+    size_t open_loop_peak_memory_bytes = 0;
+    size_t closed_loop_peak_memory_bytes = 0;
+
+    // Transition prediction & recovery
+    size_t closed_loop_total_replans = 0;
+    size_t closed_loop_transition_errors = 0;
+    size_t closed_loop_recovery_opportunities = 0; // episodes with transition_errors > 0
+    size_t closed_loop_recoveries = 0;             // reached goal despite transition_errors > 0
+    double recovery_rate = 0.0;
+
+    // Group breakdown (eligible episodes):
+    std::map<EpisodeGroup, size_t> group_eligible_totals;
+    std::map<EpisodeGroup, size_t> group_open_success;
+    std::map<EpisodeGroup, size_t> group_closed_success;
+
+    // Layout-clustered stats
+    size_t total_unique_layouts = 0;
+
+    void print_summary(const std::string& title = "Paired Evaluation Summary") const;
 };
 
 struct PlanningEvaluationSummary {
@@ -406,7 +513,8 @@ public:
     static PlanExecutionResult execute_plan_open_loop(
         const PlanningEpisode& episode,
         const PlanningSearchResult& search_res,
-        bool cold_start = true
+        bool cold_start = true,
+        uint32_t max_executed_steps = 16
     );
 
     // Closed-loop receding-horizon plan execution in real simulator environment
@@ -455,6 +563,32 @@ public:
     static void run_milestone5e2d_benchmark(
         const std::string& checkpoint_path,
         const std::string& csv_path = "experiments/results/phase5/milestone5e2d_planning_eval.csv"
+    );
+
+    // Evaluates paired comparison between open-loop and closed-loop on an episode dataset
+    // with exact same action budget = horizon H (Milestone 5E.3 Step 2A)
+    static PairedBenchmarkSummary evaluate_paired_comparison(
+        const MicroUnitNetwork& net,
+        const std::vector<PlanningEpisode>& episodes,
+        uint32_t beam_width,
+        uint32_t horizon, // action budget H
+        bool cold_start = true,
+        const PlanningScoreConfig& score_cfg = PlanningScoreConfig(),
+        std::vector<PairedEpisodeResult>* out_paired_episodes = nullptr
+    );
+
+    // Bootstrap 95% confidence interval computation for delta (percentage points)
+    static std::pair<double, double> compute_paired_bootstrap_ci(
+        const std::vector<PairedEpisodeResult>& eligible_results,
+        size_t num_bootstraps = 2000,
+        uint64_t seed = 4242ULL
+    );
+
+    // Layout-clustered bootstrap 95% confidence interval computation for delta
+    static std::pair<double, double> compute_layout_clustered_bootstrap_ci(
+        const std::vector<PairedEpisodeResult>& eligible_results,
+        size_t num_bootstraps = 2000,
+        uint64_t seed = 4242ULL
     );
 };
 
