@@ -239,6 +239,10 @@ struct PlanExecutionResult {
     float mean_step_confidence = 1.0f;
     float final_score = 0.0f;
     bool cold_start = true;
+    bool is_closed_loop = false;
+    uint32_t replan_count = 0;
+    uint32_t transition_errors = 0;
+    size_t peak_memory_bytes = 0;
 };
 
 struct PlanningEvaluationSummary {
@@ -402,6 +406,25 @@ public:
     static PlanExecutionResult execute_plan_open_loop(
         const PlanningEpisode& episode,
         const PlanningSearchResult& search_res,
+        bool cold_start = true
+    );
+
+    // Closed-loop receding-horizon plan execution in real simulator environment
+    static PlanExecutionResult execute_plan_closed_loop(
+        const MicroUnitNetwork& net,
+        const PlanningEpisode& episode,
+        const BeamSearchConfig& config,
+        uint32_t max_executed_steps = 16,
+        bool cold_start = true
+    );
+
+    // Closed-loop receding-horizon plan execution using custom/mock predictor
+    static PlanExecutionResult execute_plan_closed_loop_custom(
+        const PredictorFn& predictor,
+        const PlanningEpisode& episode,
+        const std::vector<float>& initial_recurrent_state,
+        const BeamSearchConfig& config,
+        uint32_t max_executed_steps = 16,
         bool cold_start = true
     );
 };

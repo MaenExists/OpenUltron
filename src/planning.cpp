@@ -907,6 +907,167 @@ PlanExecutionResult PlanningEngine::execute_plan_open_loop(
     return res;
 }
 
+PlanExecutionResult PlanningEngine::execute_plan_closed_loop_custom(
+    const PredictorFn& predictor,
+    const PlanningEpisode& episode,
+    const std::vector<float>& initial_recurrent_state,
+    const BeamSearchConfig& config,
+    uint32_t max_executed_steps,
+    bool cold_start
+) {
+    Timer total_timer;
+    PlanExecutionResult res;
+    res.episode = episode;
+    res.cold_start = cold_start;
+    res.is_closed_loop = true;
+    res.group = classify_episode(episode, config.max_depth);
+    res.actual_trajectory.push_back(episode.start_pos);
+    res.predicted_trajectory.push_back(episode.start_pos);
+
+    uint32_t curr_pos = episode.start_pos;
+    std::vector<float> h_live = initial_recurrent_state;
+
+    // Peak memory estimate (root + beam candidates + expanded children)
+    size_t node_size = sizeof(PlanningNode) + (h_live.size() * sizeof(float));
+    res.peak_memory_bytes = (config.beam_width * 5 + 1) * node_size;
+
+    while (curr_pos != episode.goal_pos && res.executed_plan.size() < max_executed_steps) {
+        // 1. Obtain current permitted observation (curr_pos, episode.layout)
+        // 2. Initialize search root from current observation & live recurrent state
+        PlanningNode root;
+        root.predicted_position = curr_pos;
+        root.recurrent_state = h_live; // Independent copy: search cannot mutate h_live
+        root.predicted_trajectory.push_back(curr_pos);
+        root.depth = 0;
+        root.goal_reached = (curr_pos == episode.goal_pos);
+        root.manhattan_to_goal = compute_manhattan_distance(curr_pos, episode.goal_pos, episode.layout.width);
+        root.score = PlanningScorer::compute_score(
+            curr_pos, episode.goal_pos, 0, config.max_depth, root.goal_reached, config.score_cfg, episode.layout.width
+        );
+
+        // 3. Execute bounded beam search using world model predictor
+        auto search_res = beam_search_custom(predictor, episode.layout, root, episode.goal_pos, config);
+        res.nodes_expanded += search_res.nodes_expanded;
+        res.model_evaluations += search_res.model_evaluations;
+        res.replan_count++;
+
+        if (search_res.best_plan.empty()) {
+            // No candidate action returned
+            break;
+        }
+
+        // 4. Select the first action of the best predicted plan
+        Action action_to_execute = search_res.best_plan[0];
+
+        // 5. Execute that action in the actual simulator
+        auto trans = GridWorldEnv::simulate_transition(
+            curr_pos, action_to_execute, episode.layout.obstacles, episode.layout.width, episode.layout.height
+        );
+        uint32_t real_next_pos = trans.to_pos;
+
+        // 6 & 7. Advance live recurrent state using the same temporal convention as training
+        std::vector<float> x_step;
+        encode_model_input(curr_pos, episode.layout, action_to_execute, x_step);
+
+        std::vector<float> h_next, logits, probs;
+        predictor(h_live, x_step, h_next, logits, probs);
+
+        uint32_t pred_step = static_cast<uint32_t>(
+            std::distance(probs.begin(), std::max_element(probs.begin(), probs.end()))
+        );
+
+        if (pred_step != real_next_pos) {
+            res.transition_errors++;
+            if (res.first_divergence_step == -1) {
+                res.first_divergence_step = static_cast<int32_t>(res.executed_plan.size() + 1);
+            }
+        }
+
+        h_live = std::move(h_next);
+        curr_pos = real_next_pos;
+
+        res.executed_plan.push_back(action_to_execute);
+        res.actual_trajectory.push_back(curr_pos);
+        res.predicted_trajectory.push_back(pred_step);
+    }
+
+    res.search_runtime_ms = total_timer.elapsed_ms();
+    res.actual_goal_reached = (curr_pos == episode.goal_pos);
+    res.predicted_goal_reached = res.actual_goal_reached;
+    res.predicted_actual_agreement = true;
+
+    if (res.actual_goal_reached && episode.shortest_path_length > 0) {
+        res.path_efficiency = static_cast<float>(res.executed_plan.size()) / static_cast<float>(episode.shortest_path_length);
+    } else {
+        res.path_efficiency = 0.0f;
+    }
+
+    // Failure categorization
+    if (res.actual_goal_reached) {
+        res.failure_category = FailureCategory::None;
+    } else if (episode.shortest_path_length > max_executed_steps) {
+        res.failure_category = FailureCategory::DepthInsufficient;
+    } else if (res.transition_errors > 0) {
+        res.failure_category = FailureCategory::IncorrectPosition;
+    } else {
+        res.failure_category = FailureCategory::PrunedValidRoute;
+    }
+
+    return res;
+}
+
+PlanExecutionResult PlanningEngine::execute_plan_closed_loop(
+    const MicroUnitNetwork& net,
+    const PlanningEpisode& episode,
+    const BeamSearchConfig& config,
+    uint32_t max_executed_steps,
+    bool cold_start
+) {
+    PredictorFn predictor = [&net](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        net.forward_step_branching(
+            h_in,
+            x,
+            h_out,
+            logits,
+            probs,
+            ReadoutMode::Softmax
+        );
+    };
+
+    std::vector<float> initial_h;
+    if (cold_start) {
+        initial_h.assign(net.config().num_units, 0.0f);
+    } else {
+        // Legitimate warm state: observe initial state s_0 with Action::Stay to compute h(1)
+        std::vector<float> x_prior;
+        encode_model_input(episode.start_pos, episode.layout, Action::Stay, x_prior);
+        std::vector<float> logits, probs;
+        net.forward_step_branching(
+            std::vector<float>(net.config().num_units, 0.0f),
+            x_prior,
+            initial_h,
+            logits,
+            probs,
+            ReadoutMode::Softmax
+        );
+    }
+
+    return execute_plan_closed_loop_custom(
+        predictor,
+        episode,
+        initial_h,
+        config,
+        max_executed_steps,
+        cold_start
+    );
+}
+
 // ============================================================================
 // 6. Scientific Planning Evaluator Implementation
 // ============================================================================

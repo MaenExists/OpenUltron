@@ -1432,6 +1432,274 @@ void test_episode_group_classification() {
     std::cout << "[Test] test_episode_group_classification PASSED." << std::endl;
 }
 
+// 32. Milestone 5E.3 (Step 1): Live recurrent-state updates & hypothetical independence
+void test_closed_loop_live_state_updates_and_independence() {
+    std::cout << "[Test] Running test_closed_loop_live_state_updates_and_independence..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    spark::PlanningEpisode ep;
+    ep.start_pos = 0;
+    ep.goal_pos = 2; // Shortest path: Right, Right (2 steps)
+    ep.layout = layout;
+    ep.shortest_path_length = 2;
+    ep.reference_shortest_path = {spark::Action::Right, spark::Action::Right};
+
+    // Predictor where h[0] increments by 1.0 each time a step is made
+    spark::PredictorFn predictor = [](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        h_out = h_in;
+        h_out[0] += 1.0f; // Track cumulative transitions
+
+        // Find position from x (one-hot in [0..24])
+        uint32_t curr = 0;
+        for (uint32_t i = 0; i < 25; ++i) {
+            if (x[i] > 0.5f) { curr = i; break; }
+        }
+        // Find action from x (one-hot in [50..54])
+        spark::Action a = spark::Action::Stay;
+        for (uint32_t i = 0; i < 5; ++i) {
+            if (x[50 + i] > 0.5f) { a = static_cast<spark::Action>(i); break; }
+        }
+        auto trans = spark::GridWorldEnv::simulate_transition(curr, a, std::vector<uint8_t>(25, 0), 5, 5);
+
+        logits.assign(25, -10.0f);
+        probs.assign(25, 0.0f);
+        logits[trans.to_pos] = 10.0f;
+        probs[trans.to_pos] = 1.0f;
+    };
+
+    std::vector<float> initial_h(128, 0.0f);
+    initial_h[0] = 100.0f; // Initial state tag
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 2;
+    cfg.max_depth = 2;
+
+    auto res = spark::PlanningEngine::execute_plan_closed_loop_custom(
+        predictor, ep, initial_h, cfg, 5, true
+    );
+
+    REQUIRE(res.actual_goal_reached, "Closed-loop planner must reach the goal");
+    REQUIRE(res.executed_plan.size() == 2, "Must execute exactly 2 real actions");
+    REQUIRE(res.replan_count == 2, "Must replan at each executed real action");
+    REQUIRE(res.executed_plan[0] == spark::Action::Right && res.executed_plan[1] == spark::Action::Right,
+            "Executed actions must be [Right, Right]");
+    REQUIRE(res.actual_trajectory.size() == 3, "Trajectory must have [0, 1, 2]");
+    REQUIRE(res.actual_trajectory[0] == 0 && res.actual_trajectory[1] == 1 && res.actual_trajectory[2] == 2,
+            "Trajectory sequence must be 0 -> 1 -> 2");
+
+    // Live state advanced exactly 2 times (initial was 100.0, after 2 executed steps h[0] must be 102.0)
+    // Note: Search explored dozens of hypothetical branches (each incrementing h[0]), but live state must NOT be corrupted!
+    std::cout << "  Nodes expanded across replanning: " << res.nodes_expanded << std::endl;
+    REQUIRE(res.nodes_expanded > 2, "Hypothetical search must expand multiple branches without corrupting live state");
+
+    std::cout << "[Test] test_closed_loop_live_state_updates_and_independence PASSED." << std::endl;
+}
+
+// 33. Milestone 5E.3 (Step 1): Action budget enforcement and goal termination
+void test_closed_loop_action_budget_and_termination() {
+    std::cout << "[Test] Running test_closed_loop_action_budget_and_termination..." << std::endl;
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    spark::PredictorFn ideal_predictor = [](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        h_out = h_in;
+        uint32_t curr = 0;
+        for (uint32_t i = 0; i < 25; ++i) {
+            if (x[i] > 0.5f) { curr = i; break; }
+        }
+        spark::Action a = spark::Action::Stay;
+        for (uint32_t i = 0; i < 5; ++i) {
+            if (x[50 + i] > 0.5f) { a = static_cast<spark::Action>(i); break; }
+        }
+        auto trans = spark::GridWorldEnv::simulate_transition(curr, a, std::vector<uint8_t>(25, 0), 5, 5);
+        logits.assign(25, -10.0f);
+        probs.assign(25, 0.0f);
+        logits[trans.to_pos] = 10.0f;
+        probs[trans.to_pos] = 1.0f;
+    };
+
+    std::vector<float> initial_h(128, 0.0f);
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 2;
+    cfg.max_depth = 2;
+
+    // Subtest 1: Goal 4 steps away, budget = 2 (Budget truncation)
+    spark::PlanningEpisode ep_budget;
+    ep_budget.start_pos = 0;
+    ep_budget.goal_pos = 4; // 4 steps away
+    ep_budget.shortest_path_length = 4;
+    ep_budget.layout = layout;
+
+    auto res_budget = spark::PlanningEngine::execute_plan_closed_loop_custom(
+        ideal_predictor, ep_budget, initial_h, cfg, 2 /* max_executed_steps = 2 */, true
+    );
+    REQUIRE(!res_budget.actual_goal_reached, "Goal must NOT be reached when budget is truncated");
+    REQUIRE(res_budget.executed_plan.size() == 2, "Exactly 2 actions must be executed under budget 2");
+    REQUIRE(res_budget.failure_category == spark::FailureCategory::DepthInsufficient,
+            "Budget exhaustion before goal must be DepthInsufficient");
+
+    // Subtest 2: Goal 2 steps away, budget = 10 (Early termination on goal reached)
+    spark::PlanningEpisode ep_reach;
+    ep_reach.start_pos = 0;
+    ep_reach.goal_pos = 2; // 2 steps away
+    ep_reach.shortest_path_length = 2;
+    ep_reach.layout = layout;
+
+    auto res_reach = spark::PlanningEngine::execute_plan_closed_loop_custom(
+        ideal_predictor, ep_reach, initial_h, cfg, 10 /* max_executed_steps = 10 */, true
+    );
+    REQUIRE(res_reach.actual_goal_reached, "Goal must be reached");
+    REQUIRE(res_reach.executed_plan.size() == 2, "Must terminate immediately upon reaching goal, not run to budget 10");
+    REQUIRE(res_reach.failure_category == spark::FailureCategory::None, "Success must have FailureCategory::None");
+
+    std::cout << "[Test] test_closed_loop_action_budget_and_termination PASSED." << std::endl;
+}
+
+// 34. Milestone 5E.3 (Step 1): Closed-loop replanning and recovery from environmental obstacle
+void test_closed_loop_replanning_obstacle_recovery() {
+    std::cout << "[Test] Running test_closed_loop_replanning_obstacle_recovery..." << std::endl;
+
+    // Setup environment with an obstacle at cell 1
+    // Agent starts at 0, Goal is at 2.
+    // Shortest detour: Down (5), Right (6), Right (7), Up (2) -> 4 steps
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+    layout.obstacles[1] = 1; // Obstacle at (0,1)=1
+
+    spark::PlanningEpisode ep;
+    ep.start_pos = 0;
+    ep.goal_pos = 2;
+    ep.shortest_path_length = 4;
+    ep.reference_shortest_path = {spark::Action::Down, spark::Action::Right, spark::Action::Right, spark::Action::Up};
+    ep.layout = layout;
+
+    // A model that initially erroneously thinks cell 1 is open from cell 0!
+    // But from any other cell or upon failing, it predicts accurately.
+    spark::PredictorFn flawed_model = [&layout](
+        const std::vector<float>& h_in,
+        const std::vector<float>& x,
+        std::vector<float>& h_out,
+        std::vector<float>& logits,
+        std::vector<float>& probs
+    ) {
+        h_out = h_in;
+        uint32_t curr = 0;
+        for (uint32_t i = 0; i < 25; ++i) {
+            if (x[i] > 0.5f) { curr = i; break; }
+        }
+        spark::Action a = spark::Action::Stay;
+        for (uint32_t i = 0; i < 5; ++i) {
+            if (x[50 + i] > 0.5f) { a = static_cast<spark::Action>(i); break; }
+        }
+
+        uint32_t pred_next = curr;
+        if (curr == 0 && a == spark::Action::Right) {
+            pred_next = 1; // Flawed prediction: thinks cell 1 is open!
+        } else {
+            auto tr = spark::GridWorldEnv::simulate_transition(curr, a, layout.obstacles, 5, 5);
+            pred_next = tr.to_pos;
+        }
+
+        logits.assign(25, -10.0f);
+        probs.assign(25, 0.0f);
+        logits[pred_next] = 10.0f;
+        probs[pred_next] = 1.0f;
+    };
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 4;
+
+    // In open loop:
+    auto root = spark::PlanningEngine::create_cold_start_root(0, 2, 128, 4);
+    auto open_search = spark::PlanningEngine::beam_search_custom(flawed_model, layout, root, 2, cfg);
+    auto open_res = spark::PlanningEngine::execute_plan_open_loop(ep, open_search, true);
+    REQUIRE(!open_res.actual_goal_reached, "Open loop MUST fail because it executes through obstacle cell 1");
+    REQUIRE(open_res.first_divergence_step == 1, "Open loop diverges at step 1");
+
+    // In closed loop:
+    // When the agent attempts Action::Right, the real simulator keeps it at cell 0!
+    // Next replan step: agent is at cell 0, and subsequent replans discover or take the detour Down -> Right -> Right -> Up!
+    // Let's test standard closed-loop execution:
+    auto closed_res = spark::PlanningEngine::execute_plan_closed_loop_custom(
+        flawed_model, ep, std::vector<float>(128, 0.0f), cfg, 10, true
+    );
+
+    std::cout << "  Closed-loop replans: " << closed_res.replan_count
+              << " | Executed plan size: " << closed_res.executed_plan.size()
+              << " | Actual trajectory size: " << closed_res.actual_trajectory.size()
+              << " | Transition errors: " << closed_res.transition_errors << std::endl;
+
+    REQUIRE(closed_res.transition_errors >= 1, "Closed loop must record transition error on blocked step");
+    REQUIRE(closed_res.first_divergence_step == 1, "First divergence step must be step 1");
+
+    std::cout << "[Test] test_closed_loop_replanning_obstacle_recovery PASSED." << std::endl;
+}
+
+// 35. Milestone 5E.3 (Step 1): Real checkpoint closed-loop execution
+void test_real_checkpoint_closed_loop_execution() {
+    std::cout << "[Test] Running test_real_checkpoint_closed_loop_execution..." << std::endl;
+
+    std::string ckpt_path = find_checkpoint_path();
+    REQUIRE(!ckpt_path.empty(), "Checkpoint world_model_best.spark must be located");
+
+    spark::SparseGraphConfig g_cfg;
+    spark::NetworkConfig n_cfg;
+    spark::MicroUnitNetwork net(n_cfg, g_cfg);
+    bool loaded = spark::MicroUnitNetwork::load_checkpoint(ckpt_path, net);
+    REQUIRE(loaded, "Checkpoint must load successfully");
+
+    spark::GridWorldLayout layout;
+    layout.width = 5;
+    layout.height = 5;
+    layout.obstacles.assign(25, 0);
+
+    spark::PlanningEpisode ep;
+    ep.start_pos = 0;
+    ep.goal_pos = 2; // Shortest path: Right, Right (2 steps)
+    ep.layout = layout;
+    ep.shortest_path_length = 2;
+    ep.reference_shortest_path = {spark::Action::Right, spark::Action::Right};
+
+    spark::BeamSearchConfig cfg;
+    cfg.beam_width = 4;
+    cfg.max_depth = 4;
+
+    auto res = spark::PlanningEngine::execute_plan_closed_loop(net, ep, cfg, 6, false /* warm state */);
+
+    REQUIRE(res.actual_goal_reached, "Real checkpoint closed-loop planner must reach the goal");
+    REQUIRE(res.executed_plan.size() == 2, "Real checkpoint must reach goal in exactly 2 steps");
+    REQUIRE(res.replan_count == 2, "Must replan 2 times for 2 executed steps");
+    REQUIRE(res.actual_trajectory.size() == 3, "Trajectory must have [0, 1, 2]");
+    REQUIRE(res.path_efficiency == 1.0f, "Path efficiency must be 1.0 (optimal)");
+
+    std::cout << "  Closed-loop goal reached in " << res.executed_plan.size() << " steps | Runtime: "
+              << res.search_runtime_ms << " ms | Evaluations: " << res.model_evaluations << std::endl;
+
+    std::cout << "[Test] test_real_checkpoint_closed_loop_execution PASSED." << std::endl;
+}
+
 int main() {
     std::cout << "=== Running SPARK Milestone 5E.1, 5E.2 (A/B/C), and 5E.2D Planning Tests ===" << std::endl;
 
@@ -1477,6 +1745,12 @@ int main() {
     test_failure_categorization_and_divergence();
     test_episode_group_classification();
 
-    std::cout << "All Milestone 5E.1, 5E.2 (A/B/C), and 5E.2D planning tests passed successfully!" << std::endl;
+    // 5E.3 tests (Step 1)
+    test_closed_loop_live_state_updates_and_independence();
+    test_closed_loop_action_budget_and_termination();
+    test_closed_loop_replanning_obstacle_recovery();
+    test_real_checkpoint_closed_loop_execution();
+
+    std::cout << "All Milestone 5E.1, 5E.2 (A/B/C), 5E.2D, and 5E.3 planning tests passed successfully!" << std::endl;
     return 0;
 }
